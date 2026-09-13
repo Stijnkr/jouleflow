@@ -72,16 +72,40 @@ export type Totals = {
   peak_export_w: number | null;
 };
 
-export type Bar = [number, number | null, number | null, number | null, number | null];
+/** [bucket start, import kWh, export kWh, gas m³, cost €, feed-in costs €] */
+export type Bar = [
+  number,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+];
+
+export type FeedInSummary = {
+  exported_kwh: number;
+  cost: number;
+  credit: number;
+  net: number;
+  cost_per_kwh: number;
+  net_per_kwh: number;
+  netting: boolean;
+  after_netting: {
+    from: string;
+    compensation: number;
+    cost: number;
+    net_per_kwh: number;
+    net: number;
+  } | null;
+};
 
 export type History = {
   period: Period;
   anchor: string;
   start: number;
   end: number;
-  /** [bucket start, import kWh, export kWh, gas m³, cost €] */
   bars: Bar[];
-  totals: Totals & { cost: Cost | null };
+  totals: Totals & { cost: Cost | null; feed_in: FeedInSummary | null };
   previous: Totals & { start: number; end: number; cost: Cost | null };
   first_data: number | null;
 };

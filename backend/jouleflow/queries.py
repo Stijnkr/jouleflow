@@ -398,6 +398,41 @@ def _period_cost(
     return sum_costs([c for c in _row_costs(storage, tariffs, rows, "agg_1d", now) if c])
 
 
+def feed_in_summary(
+    tariffs: TariffSettings | None,
+    exported_kwh: float | None,
+    cost: dict | None,
+    day: date,
+) -> dict | None:
+    """What exporting energy costs and yields in a period, and what it would yield
+    once net metering has ended."""
+    contract = tariffs.contract_on(day) if tariffs else None
+    if contract is None or cost is None or not exported_kwh:
+        return None
+    net = cost["export_credit"] - cost["export_cost"]
+    summary = {
+        "exported_kwh": round(exported_kwh, 3),
+        "cost": cost["export_cost"],
+        "credit": cost["export_credit"],
+        "net": round(net, 2),
+        "cost_per_kwh": round(cost["export_cost"] / exported_kwh, 4),
+        "net_per_kwh": round(net / exported_kwh, 4),
+        "netting": contract.netting_on(day),
+        "after_netting": None,
+    }
+    if contract.netting_on(day) and contract.netting_until:
+        later = contract.feed_in_on(contract.netting_until)
+        per_kwh = later.compensation - later.cost
+        summary["after_netting"] = {
+            "from": contract.netting_until.isoformat(),
+            "compensation": later.compensation,
+            "cost": later.cost,
+            "net_per_kwh": round(per_kwh, 4),
+            "net": round(exported_kwh * per_kwh, 2),
+        }
+    return summary
+
+
 def history(
     storage: Storage,
     period: Period,
@@ -418,7 +453,7 @@ def history(
     row_costs = _row_costs(storage, tariffs, rows, source, now)
 
     starts = _bucket_starts(storage, period, start, end)
-    buckets: dict[int, list] = {s: [s, None, None, None, None] for s in starts}
+    buckets: dict[int, list] = {s: [s, None, None, None, None, None] for s in starts}
     for r, cost in zip(rows, row_costs, strict=True):
         key = r["ts"]
         if period == "year":
@@ -430,9 +465,13 @@ def history(
         b[2] = _sum(b[2], r["d_exp_t1"], r["d_exp_t2"])
         b[3] = _sum(b[3], r["d_gas"])
         b[4] = _sum(b[4], cost["total"] if cost else None)
+        b[5] = _sum(b[5], cost["export_cost"] if cost else None)
     bars = [
-        [b[0], _round(b[1]), _round(b[2]), _round(b[3]), _round(b[4], 2)] for b in buckets.values()
+        [b[0], _round(b[1]), _round(b[2]), _round(b[3]), _round(b[4], 2), _round(b[5], 2)]
+        for b in buckets.values()
     ]
+    totals = _totals(storage, start, end)
+    period_cost = sum_costs([c for c in row_costs if c])
 
     first = storage.query_one("SELECT min(ts) AS t FROM agg_1d")["t"]
 
@@ -443,8 +482,9 @@ def history(
         "end": end,
         "bars": bars,
         "totals": {
-            **_totals(storage, start, end),
-            "cost": sum_costs([c for c in row_costs if c]),
+            **totals,
+            "cost": period_cost,
+            "feed_in": feed_in_summary(tariffs, totals["export"], period_cost, anchor),
         },
         "previous": {
             "start": prev_start,

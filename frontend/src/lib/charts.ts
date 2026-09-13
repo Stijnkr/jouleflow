@@ -51,6 +51,8 @@ export function energyBarsOption(
         const rows = [`${dot(c.import)}${t("chart.imported")} <b style="margin-left:8px">${energy(b[1])} kWh</b>`];
         if (b[2]) rows.push(`${dot(c.export)}${t("chart.exported")} <b style="margin-left:8px">${energy(b[2])} kWh</b>`);
         if (b[3] != null) rows.push(`${dot(c.gas)}${t("chart.gas")} <b style="margin-left:8px">${energy(b[3], 3)} m³</b>`);
+        if (b[5])
+          rows.push(`<span style="display:inline-block;width:14px"></span>${t("chart.feedInCost")} <b style="margin-left:8px;color:${c.import}">${euro(b[5])}</b>`);
         if (b[4] != null)
           rows.push(`<span style="display:inline-block;width:14px"></span>${t("chart.cost")} <b style="margin-left:8px">${euro(b[4])}</b>`);
         return `<div style="color:${c.muted};margin-bottom:4px">${tooltipLabel(b[0])}</div>${rows.join("<br/>")}`;

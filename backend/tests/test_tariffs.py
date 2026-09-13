@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from jouleflow.queries import feed_in_summary
 from jouleflow.tariffs import Contract, FeedInPeriod, TariffSettings, bucket_cost, current_rate
 
 TZ = ZoneInfo("Europe/Amsterdam")
@@ -82,3 +83,19 @@ def test_contract_selection_by_date():
 def test_end_before_start_is_rejected():
     with pytest.raises(ValueError):
         contract(end=date(2026, 1, 1))
+
+
+def test_feed_in_summary_shows_costs_and_the_outlook_after_netting():
+    settings = TariffSettings(contracts=[contract()])
+    cost = bucket_cost(
+        settings.contracts[0], date(2026, 9, 13), imp_low=0, imp_normal=0, exp_low=10,
+        exp_normal=0, gas=None, fixed_days=0,
+    )  # fmt: skip
+    summary = feed_in_summary(settings, 10, cost, date(2026, 9, 13))
+    assert summary["cost"] == pytest.approx(1.1495, abs=1e-3)
+    assert summary["credit"] == pytest.approx(2.27371, abs=1e-3)
+    assert summary["net"] == pytest.approx(2.27371 - 1.1495, abs=0.01)
+    assert summary["after_netting"]["from"] == "2027-01-01"
+    assert summary["after_netting"]["net"] == pytest.approx(10 * (0.07 - 0.064977), abs=0.01)
+
+    assert feed_in_summary(settings, 0, cost, date(2026, 9, 13)) is None

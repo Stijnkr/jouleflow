@@ -183,9 +183,15 @@ function ExportedCard({ summary }: { summary?: Summary }) {
       value={energy(summary?.today.export)}
       unit="kWh"
       footer={
-        w
-          ? t("live.sentBack", { start: time(w.start), end: time(w.end) })
-          : t("live.nothingSentBack")
+        summary?.cost_today?.export_cost ? (
+          <span className="text-import">
+            {t("live.feedInCostToday", { amount: euro(summary.cost_today.export_cost) })}
+          </span>
+        ) : w ? (
+          t("live.sentBack", { start: time(w.start), end: time(w.end) })
+        ) : (
+          t("live.nothingSentBack")
+        )
       }
     />
   );

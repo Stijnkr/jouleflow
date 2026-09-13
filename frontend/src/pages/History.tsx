@@ -4,9 +4,9 @@ import { useMemo, useState } from "react";
 import { Chart } from "../components/Chart";
 import { MetricChart } from "../components/MetricChart";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
-import { api, type Cost, type History, type Period } from "../lib/api";
+import { api, type Cost, type FeedInSummary, type History, type Period } from "../lib/api";
 import { energyBarsOption } from "../lib/charts";
-import { energy, euro, isoDate, kw, longDate, monthName, powerText, shortDate, time, weekday } from "../lib/format";
+import { energy, euro, isoDate, isoToDate, kw, longDate, monthName, powerText, shortDate, time, weekday } from "../lib/format";
 import { t } from "../lib/i18n";
 import { DEFAULT_P1_SELECTION, P1_METRICS } from "../lib/metrics";
 import type { MessageKey } from "../locales/en";
@@ -208,6 +208,8 @@ export function HistoryPage() {
           </div>
         </Card>
 
+        {h?.totals.feed_in && <FeedInCard summary={h.totals.feed_in} />}
+
         <MeasurementsCard period={period} anchor={isoDate(anchor)} />
 
       </div>
@@ -315,6 +317,63 @@ function MeasurementsCard({ period, anchor }: { period: Period; anchor: string }
         end={data?.end ?? 0}
         bucketLabel={period === "day" ? "time" : period === "week" ? "datetime" : "date"}
       />
+    </Card>
+  );
+}
+
+function FeedInCard({ summary }: { summary: FeedInSummary }) {
+  const later = summary.after_netting;
+  const stats = [
+    {
+      label: t("feedIn.exported"),
+      value: `${energy(summary.exported_kwh)} kWh`,
+    },
+    {
+      label: t("feedIn.cost"),
+      value: euro(-summary.cost),
+      detail: t("feedIn.costDetail", { price: euro(summary.cost_per_kwh, 4) }),
+      tone: "text-import",
+    },
+    {
+      label: summary.netting ? t("feedIn.creditNetting") : t("feedIn.creditCompensation"),
+      value: euro(summary.credit),
+      detail: summary.netting ? t("feedIn.creditDetail") : t("feedIn.creditDetailCompensation"),
+      tone: "text-export",
+    },
+    {
+      label: t("feedIn.net"),
+      value: euro(summary.net),
+      detail: t("feedIn.netDetail", { price: euro(summary.net_per_kwh, 4) }),
+      tone: summary.net < 0 ? "text-import" : "text-foreground",
+    },
+  ];
+
+  return (
+    <Card>
+      <CardHeader title={t("feedIn.title")} description={t("feedIn.description")} />
+      <div className="grid grid-cols-2 gap-x-6 gap-y-5 px-5 pt-5 pb-5 sm:px-6 lg:grid-cols-4">
+        {stats.map((stat) => (
+          <div key={stat.label} className="min-w-0">
+            <div className="text-sm text-muted">{stat.label}</div>
+            <div className={cn("tabular mt-1 text-2xl font-semibold tracking-tight", stat.tone)}>
+              {stat.value}
+            </div>
+            {stat.detail && <div className="tabular mt-1 truncate text-xs text-subtle">{stat.detail}</div>}
+          </div>
+        ))}
+      </div>
+      {later && (
+        <p className="tabular mx-5 mb-5 rounded-lg bg-muted-surface px-4 py-3 text-sm text-muted sm:mx-6">
+          {t(later.net < 0 ? "feedIn.outlookLoss" : "feedIn.outlook", {
+            date: isoToDate(later.from),
+            net: euro(Math.abs(later.net)),
+            compensation: euro(later.compensation, 3),
+            cost: euro(later.cost, 3),
+            perKwh: euro(later.net_per_kwh, 4),
+            nowPerKwh: euro(summary.net_per_kwh, 4),
+          })}
+        </p>
+      )}
     </Card>
   );
 }
