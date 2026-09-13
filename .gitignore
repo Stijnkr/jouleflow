@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Local data & config
+data/
+*.db
+*.db-wal
+*.db-shm
+.env
+
+# OS
+.DS_Store
+*.tsbuildinfo

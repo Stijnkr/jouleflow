@@ -1,0 +1,105 @@
+import { useQuery } from "@tanstack/react-query";
+import { Activity, ChartColumn, Plug, SlidersHorizontal, Zap } from "lucide-react";
+import { NavLink, Outlet } from "react-router";
+import { api } from "../lib/api";
+import { time } from "../lib/format";
+import { useLive, useNow } from "../lib/live";
+import { cn, StatusDot } from "./ui";
+
+const nav = [
+  { to: "/", label: "Live", icon: Activity },
+  { to: "/history", label: "History", icon: ChartColumn },
+  { to: "/devices", label: "Devices", icon: Plug },
+  { to: "/settings", label: "Settings", icon: SlidersHorizontal },
+];
+
+function MeterStatus() {
+  const { reading, connected } = useLive();
+  const now = useNow();
+  const { data } = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 30_000 });
+  const fresh = connected && reading != null && now - reading.ts < 15;
+  const via = data?.device.connection.split(" · ")[0] ?? "P1 reader";
+
+  return (
+    <div className="rounded-lg border border-border p-4">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <StatusDot ok={fresh} />
+        P1 meter
+      </div>
+      <p className="mt-2 text-[13px] leading-relaxed text-muted">
+        {fresh ? `Connected via ${via}` : connected ? "Waiting for meter data" : "Reconnecting…"}
+        <br />
+        <span className="tabular">
+          {reading ? `Last reading ${time(reading.ts, true)}` : "No readings yet"}
+        </span>
+      </p>
+    </div>
+  );
+}
+
+export function Layout() {
+  return (
+    <div className="flex min-h-full">
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-border bg-sidebar p-4 lg:flex">
+        <div className="flex items-center gap-2.5 px-2 pt-2 pb-6">
+          <Zap className="size-5 text-import" strokeWidth={2.25} />
+          <span className="text-[17px] font-semibold tracking-tight">Jouleflow</span>
+        </div>
+        <nav className="flex flex-col gap-1">
+          {nav.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === "/"}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[15px] transition-colors",
+                  isActive
+                    ? "bg-muted-surface font-medium text-foreground"
+                    : "text-muted hover:bg-muted-surface/60 hover:text-foreground",
+                )
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  <Icon className={cn("size-[18px]", isActive && "text-import")} strokeWidth={1.75} />
+                  {label}
+                </>
+              )}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="mt-auto">
+          <MeterStatus />
+        </div>
+      </aside>
+
+      <main className="min-w-0 flex-1 pb-24 lg:pb-0">
+        <Outlet />
+      </main>
+
+      <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-4 border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+        {nav.map(({ to, label, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === "/"}
+            className={({ isActive }) =>
+              cn(
+                "flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium",
+                isActive ? "text-foreground" : "text-subtle",
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <Icon className={cn("size-5", isActive && "text-import")} strokeWidth={1.75} />
+                {label}
+              </>
+            )}
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  );
+}

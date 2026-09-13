@@ -22,14 +22,39 @@ Jouleflow connects the energy devices in your home, stores their data, and shows
 Jouleflow currently runs on a **Raspberry Pi**.
 Later we plan to build **dedicated open hardware** with built-in I/O (P1, Modbus/RS-485, relays, etc.) for easy, plug-and-play installation.
 
+## Getting started
+
+Jouleflow currently reads the P1 port through an ESPHome-based reader such as the [SlimmeLezer](https://www.zuidwijk.com/product/slimmelezer-plus/).
+
+On a Raspberry Pi with [uv](https://docs.astral.sh/uv/) and Node.js 20.19+ installed:
+
+```bash
+git clone https://github.com/Stijnkr/jouleflow.git
+cd jouleflow
+./deploy/install.sh
+```
+
+Set the address of your P1 reader in `/etc/jouleflow.env` (`JOULEFLOW_P1_URL`), restart with `sudo systemctl restart jouleflow`, and open `http://<your-pi>.local`.
+
+### Development
+
+```bash
+cd backend && uv sync && uv run pytest        # backend + tests
+JOULEFLOW_P1_URL=http://<reader-ip> uv run jouleflow
+
+cd frontend && npm install && npm run dev      # web app with hot reload, proxies /api
+```
+
 ## Roadmap
 
 ### Phase 1: P1 meter & data foundation 👈 *current focus*
-- [ ] Read the Dutch/Belgian smart meter via the P1 port (DSMR)
-- [ ] Store readings reliably and efficiently (raw data + aggregated history)
-- [ ] Web app with **live** power and energy charts
-- [ ] **History** view (day / week / month / year)
-- [ ] Runs on a Raspberry Pi
+- [x] Read the Dutch/Belgian smart meter via the P1 port (DSMR, via ESPHome readers)
+- [x] Store readings reliably and efficiently (raw data + aggregated history)
+- [x] Web app with **live** power and energy charts
+- [x] **History** view (day / week / month / year)
+- [x] Runs on a Raspberry Pi
+- [ ] Direct USB P1 cable support
+- [ ] Data export (CSV)
 
 ### Phase 2: Tariffs & insight
 - [ ] Fixed and dynamic tariff support
