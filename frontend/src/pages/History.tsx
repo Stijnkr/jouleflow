@@ -354,11 +354,11 @@ function FeedInCard({ summary }: { summary: FeedInSummary }) {
       <div className="grid grid-cols-2 gap-x-6 gap-y-5 px-5 pt-5 pb-5 sm:px-6 lg:grid-cols-4">
         {stats.map((stat) => (
           <div key={stat.label} className="min-w-0">
-            <div className="text-sm text-muted">{stat.label}</div>
+            <div className="truncate text-sm text-muted">{stat.label}</div>
             <div className={cn("tabular mt-1 text-2xl font-semibold tracking-tight", stat.tone)}>
               {stat.value}
             </div>
-            {stat.detail && <div className="tabular mt-1 truncate text-xs text-subtle">{stat.detail}</div>}
+            {stat.detail && <div className="tabular mt-1 text-xs leading-snug text-subtle">{stat.detail}</div>}
           </div>
         ))}
       </div>
