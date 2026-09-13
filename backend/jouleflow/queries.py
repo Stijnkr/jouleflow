@@ -412,8 +412,8 @@ def feed_in_summary(
     net = cost["export_credit"] - cost["export_cost"]
     summary = {
         "exported_kwh": round(exported_kwh, 3),
-        "cost": cost["export_cost"],
-        "credit": cost["export_credit"],
+        "cost": round(cost["export_cost"], 2),
+        "credit": round(cost["export_credit"], 2),
         "net": round(net, 2),
         "cost_per_kwh": round(cost["export_cost"] / exported_kwh, 4),
         "net_per_kwh": round(net / exported_kwh, 4),
@@ -484,7 +484,15 @@ def history(
         "totals": {
             **totals,
             "cost": period_cost,
-            "feed_in": feed_in_summary(tariffs, totals["export"], period_cost, anchor),
+            "feed_in": feed_in_summary(
+                tariffs,
+                totals["export"],
+                {
+                    key: sum(c[key] for c in row_costs if c)
+                    for key in ("export_cost", "export_credit")
+                },
+                anchor,
+            ),
         },
         "previous": {
             "start": prev_start,
