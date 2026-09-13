@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router";
 import { Layout } from "./components/Layout";
 import "./index.css";
+import { I18nProvider } from "./lib/i18n";
 import { LiveProvider } from "./lib/live";
 import { ThemeProvider } from "./lib/theme";
 import { ContractSettingsPage } from "./pages/ContractSettings";
@@ -34,11 +35,13 @@ const router = createBrowserRouter([
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <LiveProvider>
-          <RouterProvider router={router} />
-        </LiveProvider>
-      </QueryClientProvider>
+      <I18nProvider>
+        <QueryClientProvider client={queryClient}>
+          <LiveProvider>
+            <RouterProvider router={router} />
+          </LiveProvider>
+        </QueryClientProvider>
+      </I18nProvider>
     </ThemeProvider>
   </StrictMode>,
 );

@@ -5,16 +5,17 @@ import { Chart } from "../components/Chart";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
 import { api, type PowerPoint, type PowerRange, type Reading, type Summary } from "../lib/api";
 import { powerChartOption } from "../lib/charts";
-import { energy, euro, kw, longDate, power, powerText, time } from "../lib/format";
+import { energy, euro, kw, longDate, num, power, powerText, time } from "../lib/format";
 import { useLive, useNow } from "../lib/live";
+import { t } from "../lib/i18n";
 import { useTheme } from "../lib/theme";
 
 const RANGE_SECONDS: Record<PowerRange, number> = { hour: 3600, day: 86400, week: 7 * 86400 };
-const RANGE_LABEL: Record<PowerRange, string> = {
-  hour: "Last 60 minutes, updating live",
-  day: "Last 24 hours",
-  week: "Last 7 days",
-};
+const RANGE_LABEL = {
+  hour: "live.rangeHour",
+  day: "live.rangeDay",
+  week: "live.rangeWeek",
+} as const;
 
 export function LivePage() {
   const { reading } = useLive();
@@ -34,11 +35,11 @@ export function LivePage() {
   return (
     <>
       <PageHeader
-        title="Live"
+        title={t("live.title")}
         subtitle={
           <>
             {longDate(now)}
-            {current && <> · updated {time(current.ts, true)}</>}
+            {current && <> · {t("live.updated", { time: time(current.ts, true) })}</>}
           </>
         }
         actions={
@@ -47,12 +48,12 @@ export function LivePage() {
               value={range}
               onChange={setRange}
               options={[
-                { value: "hour", label: "Hour" },
-                { value: "day", label: "Day" },
-                { value: "week", label: "Week" },
+                { value: "hour", label: t("range.hour") },
+                { value: "day", label: t("range.day") },
+                { value: "week", label: t("range.week") },
               ]}
             />
-            <IconButton label="Toggle theme" onClick={toggle}>
+            <IconButton label={t("common.toggleTheme")} onClick={toggle}>
               {resolved === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
             </IconButton>
           </>
@@ -114,12 +115,12 @@ function StatCard({
 }
 
 function Change({ pct, lowerIsGood }: { pct: number | null | undefined; lowerIsGood: boolean }) {
-  if (pct == null) return <>No data for yesterday yet</>;
+  if (pct == null) return <>{t("change.noYesterday")}</>;
   const lower = pct < 0;
   const good = lower === lowerIsGood;
   return (
     <span className={good ? "text-export" : "text-import"}>
-      {Math.abs(Math.round(pct))}% {lower ? "less" : "more"} than yesterday
+      {t(lower ? "change.lessThanYesterday" : "change.moreThanYesterday", { pct: Math.abs(Math.round(pct)) })}
     </span>
   );
 }
@@ -130,7 +131,7 @@ function NowCard({ reading, summary }: { reading: Reading | null; summary?: Summ
   const peak = summary?.peak_import;
   return (
     <StatCard
-      label={exporting ? "Exporting now" : "Drawing now"}
+      label={exporting ? t("live.exportingNow") : t("live.drawingNow")}
       icon={
         exporting ? (
           <ArrowUp className="size-4 text-export" />
@@ -142,7 +143,9 @@ function NowCard({ reading, summary }: { reading: Reading | null; summary?: Summ
       unit={unit}
       valueClass={exporting ? "text-export" : "text-import"}
       footer={
-        peak ? `Peak today ${powerText(peak.w)} at ${time(peak.ts)}` : "Waiting for today's data"
+        peak
+          ? t("live.peakToday", { power: powerText(peak.w), time: time(peak.ts) })
+          : t("live.waitingToday")
       }
     />
   );
@@ -151,7 +154,7 @@ function NowCard({ reading, summary }: { reading: Reading | null; summary?: Summ
 function ImportedCard({ summary }: { summary?: Summary }) {
   return (
     <StatCard
-      label="Imported today"
+      label={t("live.importedToday")}
       value={energy(summary?.today.import)}
       unit="kWh"
       footer={<Change pct={summary?.change_pct.import} lowerIsGood />}
@@ -163,11 +166,13 @@ function ExportedCard({ summary }: { summary?: Summary }) {
   const w = summary?.export_window;
   return (
     <StatCard
-      label="Exported today"
+      label={t("live.exportedToday")}
       value={energy(summary?.today.export)}
       unit="kWh"
       footer={
-        w ? `Sent back ${time(w.start)} – ${time(w.end)}` : "Nothing sent back yet today"
+        w
+          ? t("live.sentBack", { start: time(w.start), end: time(w.end) })
+          : t("live.nothingSentBack")
       }
     />
   );
@@ -176,7 +181,7 @@ function ExportedCard({ summary }: { summary?: Summary }) {
 function GasCard({ summary }: { summary?: Summary }) {
   return (
     <StatCard
-      label="Gas today"
+      label={t("live.gasToday")}
       value={energy(summary?.today.gas)}
       unit="m³"
       footer={<Change pct={summary?.change_pct.gas} lowerIsGood />}
@@ -184,24 +189,29 @@ function GasCard({ summary }: { summary?: Summary }) {
   );
 }
 
-const RATE_LABEL = { normal: "normal rate", low: "low rate", single: "per kWh" };
+const RATE_LABEL = { normal: "rate.normal", low: "rate.low", single: "rate.single" } as const;
 
 function CostCard({ summary }: { summary: Summary }) {
   const cost = summary.cost_today!;
   const rate = summary.rate_now;
   return (
     <StatCard
-      label="Cost today"
+      label={t("live.costToday")}
       value={euro(cost.total)}
       unit=""
       valueClass={cost.total < 0 ? "text-export" : undefined}
       footer={
         rate ? (
-          <span title={`Energy ${euro(cost.import - cost.export_credit + cost.export_cost)} · Fixed ${euro(cost.fixed)}`}>
-            Now {euro(rate.import_price, 4)}/kWh · {RATE_LABEL[rate.rate]}
+          <span
+            title={t("live.costBreakdown", {
+              energy: euro(cost.import - cost.export_credit + cost.export_cost),
+              fixed: euro(cost.fixed),
+            })}
+          >
+            {t("live.rateNow", { price: euro(rate.import_price, 4), rate: t(RATE_LABEL[rate.rate]) })}
           </span>
         ) : (
-          `Fixed ${euro(cost.fixed)} included`
+          t("live.fixedIncluded", { amount: euro(cost.fixed) })
         )
       }
     />
@@ -214,15 +224,15 @@ function NetCard({ summary }: { summary?: Summary }) {
   const net = imp == null ? null : imp - (exp ?? 0);
   return (
     <StatCard
-      label="Net today"
+      label={t("live.netToday")}
       value={net == null ? "—" : energy(Math.abs(net))}
       unit="kWh"
       footer={
         net == null
-          ? "Import minus export"
+          ? t("live.netHint")
           : net >= 0
-            ? "More imported than exported"
-            : "More exported than imported"
+            ? t("live.netImport")
+            : t("live.netExport")
       }
     />
   );
@@ -279,12 +289,12 @@ function PowerCard({ range }: { range: PowerRange }) {
   return (
     <Card>
       <CardHeader
-        title="Power"
-        description={RANGE_LABEL[range]}
+        title={t("live.power")}
+        description={t(RANGE_LABEL[range])}
         action={
           <div className="flex gap-2">
-            <Legend color="bg-import" label="Grid import" />
-            {hasExport && <Legend color="bg-export" label="Grid export" />}
+            <Legend color="bg-import" label={t("legend.gridImport")} />
+            {hasExport && <Legend color="bg-export" label={t("legend.gridExport")} />}
           </div>
         }
       />
@@ -292,7 +302,7 @@ function PowerCard({ range }: { range: PowerRange }) {
         <Chart option={option} className="h-64 w-full sm:h-80" />
         {query.isSuccess && points.length === 0 && (
           <div className="absolute inset-0 grid place-items-center text-sm text-muted">
-            Collecting data… the chart fills up as readings come in.
+            {t("live.collecting")}
           </div>
         )}
       </div>
@@ -330,14 +340,14 @@ function EnergyFlowCard({ reading }: { reading: Reading | null }) {
   return (
     <Card>
       <CardHeader
-        title="Energy flow"
+        title={t("flow.title")}
         description={
-          idle ? "Grid and home, right now" : exporting ? "Home to grid, right now" : "Grid to home, right now"
+          idle ? t("flow.idle") : exporting ? t("flow.exporting") : t("flow.importing")
         }
       />
       <div className="px-5 pt-6 pb-5 sm:px-6 sm:pb-6">
         <div className="flex items-center gap-3 sm:gap-5">
-          <FlowNode label="Grid" value={value} />
+          <FlowNode label={t("flow.grid")} value={value} />
           <svg className="h-6 min-w-0 flex-1" preserveAspectRatio="none" viewBox="0 0 100 24">
             <line
               x1="2"
@@ -361,15 +371,15 @@ function EnergyFlowCard({ reading }: { reading: Reading | null }) {
               />
             )}
           </svg>
-          <FlowNode label="Home" value={value} />
+          <FlowNode label={t("flow.home")} value={value} />
         </div>
         <div className="mt-6 flex flex-wrap items-center gap-2 text-sm text-muted">
-          {["Solar", "Battery", "EV charger"].map((d) => (
+          {[t("flow.solar"), t("flow.battery"), t("flow.ev")].map((d) => (
             <span key={d} className="rounded-full border border-dashed border-border px-3 py-1.5">
               {d}
             </span>
           ))}
-          <span className="ml-1">appear here once connected</span>
+          <span className="ml-1">{t("flow.appear")}</span>
         </div>
       </div>
     </Card>
@@ -385,9 +395,9 @@ function PhasesCard({ reading }: { reading: Reading | null }) {
   const phases = reading?.phases.filter((p) => p.power != null) ?? [];
   return (
     <Card>
-      <CardHeader title="Phases" description="Balance across L1, L2 and L3" />
+      <CardHeader title={t("phases.title")} description={t("phases.description")} />
       <div className="flex flex-col gap-5 px-5 pt-6 pb-6 sm:px-6">
-        {phases.length === 0 && <p className="text-sm text-muted">No phase data available.</p>}
+        {phases.length === 0 && <p className="text-sm text-muted">{t("phases.none")}</p>}
         {phases.map((p, i) => {
           const w = p.power ?? 0;
           const pct = Math.min(Math.abs(w) / PHASE_MAX_W, 1) * 100;
@@ -399,7 +409,7 @@ function PhasesCard({ reading }: { reading: Reading | null }) {
                   L{i + 1}
                   {p.voltage != null && (
                     <span className="tabular ml-2 text-subtle">
-                      {Math.round(p.voltage)} V{p.current != null && ` · ${p.current} A`}
+                      {Math.round(p.voltage)} V{p.current != null && ` · ${num(p.current, 0)} A`}
                     </span>
                   )}
                 </span>

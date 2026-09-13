@@ -75,7 +75,9 @@ The web app must feel **super clean**:
 
 ## Conventions
 
-- Code, comments, commits and docs in **English**
+- Code, comments, commits and technical docs (like this file) in **English**
+- The README is written in **Dutch**
+- The web app is **Dutch by default** with English as an option. Never hard-code UI text: add every string to both `frontend/src/locales/nl.ts` and `en.ts` and use `t()`. Format numbers, money and dates with the helpers in `frontend/src/lib/format.ts` so they follow the chosen locale.
 - Keep dependencies minimal; justify new ones
 - Write tests for parsers, storage and aggregation logic
 - License: Apache-2.0. Don't add code with incompatible licenses. The "Jouleflow" name is a trademark and is not covered by the license.

@@ -73,7 +73,14 @@ class DriverInfo:
 
 
 class ProbeError(Exception):
-    """A connection test failed; the message is shown to the user."""
+    """A connection test failed.
+
+    `code` lets the web app show a translated message; the English message is the fallback.
+    """
+
+    def __init__(self, message: str, code: str = "error") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class MeterDriver(ABC):

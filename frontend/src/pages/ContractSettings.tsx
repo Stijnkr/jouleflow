@@ -4,7 +4,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Button, Card, CardHeader, cn, PageHeader, Segmented } from "../components/ui";
 import { api, type Contract, type TariffSettings } from "../lib/api";
-import { isoDate } from "../lib/format";
+import { isoDate, isoToDate, num } from "../lib/format";
+import { t } from "../lib/i18n";
 
 function newContract(): Contract {
   return {
@@ -32,9 +33,9 @@ function newContract(): Contract {
 }
 
 const HOURS_PRESETS = [
-  { value: "7-21", label: "07:00–21:00", hint: "Noord-Brabant and Limburg" },
-  { value: "7-23", label: "07:00–23:00", hint: "Rest of the Netherlands" },
-];
+  { value: "7-21", label: "07:00–21:00", hint: "contract.hoursBrabant" },
+  { value: "7-23", label: "07:00–23:00", hint: "contract.hoursRest" },
+] as const;
 
 export function ContractSettingsPage() {
   const queryClient = useQueryClient();
@@ -61,7 +62,7 @@ export function ContractSettingsPage() {
     },
   });
 
-  if (!draft) return <PageHeader title="Energy contract" />;
+  if (!draft) return <PageHeader title={t("contract.title")} />;
 
   const contract = draft.contracts[index];
   const dirty = JSON.stringify(draft) !== JSON.stringify(query.data);
@@ -104,10 +105,10 @@ export function ContractSettingsPage() {
   return (
     <>
       <PageHeader
-        title="Energy contract"
+        title={t("contract.title")}
         subtitle={
           <Link to="/settings" className="inline-flex items-center gap-1.5 hover:text-foreground">
-            <ArrowLeft className="size-3.5" /> Settings
+            <ArrowLeft className="size-3.5" /> {t("settings.title")}
           </Link>
         }
       />
@@ -120,15 +121,14 @@ export function ContractSettingsPage() {
         }}
       >
         <p className="text-sm text-muted">
-          Enter the rates from your contract or rate sheet. All amounts include VAT. Jouleflow uses
-          them to calculate what your energy costs.
+          {t("contract.intro")}
         </p>
 
         {/* Contract list */}
         <Card>
           <CardHeader
-            title="Contracts"
-            description="Add a new contract when your rates change, so history keeps the right prices"
+            title={t("contract.contracts")}
+            description={t("contract.contractsDescription")}
           />
           <div className="flex flex-wrap items-center gap-2 p-5 sm:p-6">
             {draft.contracts.map((c, i) => (
@@ -143,39 +143,39 @@ export function ContractSettingsPage() {
                     : "border-border text-muted hover:bg-muted-surface",
                 )}
               >
-                <div className="font-medium text-foreground">{c.name || "Unnamed contract"}</div>
+                <div className="font-medium text-foreground">{c.name || t("contract.unnamed")}</div>
                 <div className="tabular text-xs text-muted">
-                  {c.start} → {c.end ?? "no end date"}
+                  {isoToDate(c.start)} → {c.end ? isoToDate(c.end) : t("contract.noEnd")}
                 </div>
               </button>
             ))}
             <Button type="button" onClick={addContract} className="h-auto self-stretch">
-              <Plus className="size-4" /> New contract
+              <Plus className="size-4" /> {t("contract.new")}
             </Button>
           </div>
         </Card>
 
         {/* Details */}
         <Section
-          title="Contract"
+          title={t("contract.section")}
           action={
             draft.contracts.length > 1 && (
               <Button type="button" onClick={removeContract} className="text-import">
-                <Trash2 className="size-4" /> Remove
+                <Trash2 className="size-4" /> {t("common.remove")}
               </Button>
             )
           }
         >
           <div className="grid gap-5 sm:grid-cols-3">
-            <Field label="Supplier / product">
+            <Field label={t("contract.supplier")}>
               <input
                 className={inputClass}
-                placeholder="e.g. Coolblue 1 jaar Zeker"
+                placeholder={t("contract.supplierPlaceholder")}
                 value={contract.name}
                 onChange={(e) => update({ name: e.target.value })}
               />
             </Field>
-            <Field label="Start date">
+            <Field label={t("contract.start")}>
               <input
                 type="date"
                 required
@@ -184,7 +184,7 @@ export function ContractSettingsPage() {
                 onChange={(e) => update({ start: e.target.value })}
               />
             </Field>
-            <Field label="End date" help="Leave empty for a variable contract">
+            <Field label={t("contract.end")} help={t("contract.endHelp")}>
               <input
                 type="date"
                 className={inputClass}
@@ -195,52 +195,47 @@ export function ContractSettingsPage() {
           </div>
         </Section>
 
-        <Section title="Electricity rates" description="Per kWh, including VAT">
+        <Section title={t("contract.rates")} description={t("contract.ratesDescription")}>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-sm text-muted">Meter rates</span>
+            <span className="text-sm text-muted">{t("contract.meterRates")}</span>
             <Segmented
               value={contract.meter}
               onChange={(meter) => update({ meter })}
               options={[
-                { value: "dual", label: "Normal & low" },
-                { value: "single", label: "Single rate" },
+                { value: "dual", label: t("contract.dual") },
+                { value: "single", label: t("contract.single") },
               ]}
             />
           </div>
           <div className="grid gap-5 sm:grid-cols-3">
             {contract.meter === "dual" ? (
               <>
-                <Money label="Supply cost, normal" unit="€/kWh" value={contract.supply_normal} onChange={(v) => update({ supply_normal: v })} />
-                <Money label="Supply cost, low" unit="€/kWh" value={contract.supply_low} onChange={(v) => update({ supply_low: v })} />
+                <Money label={t("contract.supplyNormal")} unit="€/kWh" value={contract.supply_normal} onChange={(v) => update({ supply_normal: v })} />
+                <Money label={t("contract.supplyLow")} unit="€/kWh" value={contract.supply_low} onChange={(v) => update({ supply_low: v })} />
               </>
             ) : (
-              <Money label="Supply cost" unit="€/kWh" value={contract.supply_single} onChange={(v) => update({ supply_single: v })} />
+              <Money label={t("contract.supply")} unit="€/kWh" value={contract.supply_single} onChange={(v) => update({ supply_single: v })} />
             )}
-            <Money label="Energy tax" unit="€/kWh" value={contract.energy_tax} onChange={(v) => update({ energy_tax: v })} />
+            <Money label={t("contract.energyTax")} unit="€/kWh" value={contract.energy_tax} onChange={(v) => update({ energy_tax: v })} />
             <Money
-              label="Renewable energy surcharge"
+              label={t("contract.surcharge")}
               unit="€/kWh"
-              help="Opslag duurzame energie (ODE), often 0"
+              help={t("contract.surchargeHelp")}
               value={contract.surcharge}
               onChange={(v) => update({ surcharge: v })}
             />
           </div>
           <div className="tabular rounded-lg bg-muted-surface px-4 py-3 text-sm">
             {contract.meter === "dual" ? (
-              <>
-                Total <b>€{priceNormal.toFixed(4)}</b> normal · <b>€{priceLow.toFixed(4)}</b> low
-                per kWh
-              </>
+              t("contract.totalDual", { normal: `€${num(priceNormal, 4)}`, low: `€${num(priceLow, 4)}` })
             ) : (
-              <>
-                Total <b>€{priceNormal.toFixed(4)}</b> per kWh
-              </>
+              t("contract.totalSingle", { price: `€${num(priceNormal, 4)}` })
             )}
           </div>
 
           {contract.meter === "dual" && (
             <div className="flex flex-col gap-3 border-t border-border pt-5">
-              <span className="text-sm font-medium">Normal rate on weekdays</span>
+              <span className="text-sm font-medium">{t("contract.normalHours")}</span>
               <div className="grid gap-3 sm:grid-cols-3">
                 {HOURS_PRESETS.map((p) => {
                   const [s, e] = p.value.split("-").map(Number);
@@ -256,23 +251,23 @@ export function ContractSettingsPage() {
                       )}
                     >
                       <div className="tabular font-medium">{p.label}</div>
-                      <div className="text-xs text-muted">{p.hint}</div>
+                      <div className="text-xs text-muted">{t(p.hint)}</div>
                     </button>
                   );
                 })}
                 <div className="flex items-center gap-2 rounded-lg border border-border p-3 text-sm">
-                  <span className="text-muted">Custom</span>
+                  <span className="text-muted">{t("contract.custom")}</span>
                   <input type="number" min={0} max={23} className={cn(inputClass, "h-8 w-16")} value={contract.normal_start_hour} onChange={(e) => update({ normal_start_hour: Number(e.target.value) })} />
                   –
                   <input type="number" min={1} max={24} className={cn(inputClass, "h-8 w-16")} value={contract.normal_end_hour} onChange={(e) => update({ normal_end_hour: Number(e.target.value) })} />
                 </div>
               </div>
-              <p className="text-[13px] text-muted">Weekends always use the low rate.</p>
+              <p className="text-[13px] text-muted">{t("contract.weekendLow")}</p>
             </div>
           )}
         </Section>
 
-        <Section title="Solar & feed-in" description="For energy you send back to the grid">
+        <Section title={t("contract.feedIn")} description={t("contract.feedInDescription")}>
           <label className="flex items-start gap-3 text-sm">
             <input
               type="checkbox"
@@ -281,16 +276,13 @@ export function ContractSettingsPage() {
               onChange={(e) => update({ netting_until: e.target.checked ? "2027-01-01" : null })}
             />
             <span>
-              <span className="font-medium">Net metering (salderen)</span>
-              <span className="block text-muted">
-                Exported energy is offset against imported energy at the full price. It ends by law on
-                1 January 2027.
-              </span>
+              <span className="font-medium">{t("contract.netting")}</span>
+              <span className="block text-muted">{t("contract.nettingHelp")}</span>
             </span>
           </label>
           {contract.netting_until !== null && (
             <div className="sm:w-1/3">
-              <Field label="Net metering until">
+              <Field label={t("contract.nettingUntil")}>
                 <input
                   type="date"
                   className={inputClass}
@@ -303,20 +295,17 @@ export function ContractSettingsPage() {
 
           <div className="flex flex-col gap-3 border-t border-border pt-5">
             <div>
-              <span className="text-sm font-medium">Feed-in rates</span>
-              <p className="text-[13px] text-muted">
-                Compensation is paid for exported energy when there's no net metering. Feed-in costs
-                are charged on all exported energy. Add a row for each date the rates change.
-              </p>
+              <span className="text-sm font-medium">{t("contract.feedInRates")}</span>
+              <p className="text-[13px] text-muted">{t("contract.feedInHelp")}</p>
             </div>
             {contract.feed_in.map((p, i) => (
               <div key={i} className="grid grid-cols-[1fr_auto] items-end gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                <Field label="From">
+                <Field label={t("contract.from")}>
                   <input type="date" className={inputClass} value={p.start} onChange={(e) => update({ feed_in: contract.feed_in.map((q, j) => (j === i ? { ...q, start: e.target.value } : q)) })} />
                 </Field>
-                <Money label="Compensation" unit="€/kWh" value={p.compensation} onChange={(v) => update({ feed_in: contract.feed_in.map((q, j) => (j === i ? { ...q, compensation: v } : q)) })} />
-                <Money label="Feed-in costs" unit="€/kWh" value={p.cost} onChange={(v) => update({ feed_in: contract.feed_in.map((q, j) => (j === i ? { ...q, cost: v } : q)) })} />
-                <Button type="button" aria-label="Remove row" onClick={() => update({ feed_in: contract.feed_in.filter((_, j) => j !== i) })} className="col-start-2 row-start-1 px-3 sm:col-start-auto sm:row-start-auto">
+                <Money label={t("contract.compensation")} unit="€/kWh" value={p.compensation} onChange={(v) => update({ feed_in: contract.feed_in.map((q, j) => (j === i ? { ...q, compensation: v } : q)) })} />
+                <Money label={t("contract.feedInCost")} unit="€/kWh" value={p.cost} onChange={(v) => update({ feed_in: contract.feed_in.map((q, j) => (j === i ? { ...q, cost: v } : q)) })} />
+                <Button type="button" aria-label={t("contract.removeRow")} onClick={() => update({ feed_in: contract.feed_in.filter((_, j) => j !== i) })} className="col-start-2 row-start-1 px-3 sm:col-start-auto sm:row-start-auto">
                   <Trash2 className="size-4" />
                 </Button>
               </div>
@@ -333,27 +322,27 @@ export function ContractSettingsPage() {
                   })
                 }
               >
-                <Plus className="size-4" /> Add feed-in rate
+                <Plus className="size-4" /> {t("contract.addFeedIn")}
               </Button>
             </div>
           </div>
         </Section>
 
-        <Section title="Fixed costs" description="Charged regardless of usage, including VAT">
+        <Section title={t("contract.fixed")} description={t("contract.fixedDescription")}>
           <div className="grid gap-5 sm:grid-cols-3">
-            <Money label="Fixed supply costs" unit="€/month" value={contract.fixed_supply_month} onChange={(v) => update({ fixed_supply_month: v })} />
-            <Money label="Grid operator costs" unit="€/day" value={contract.grid_day} onChange={(v) => update({ grid_day: v })} />
+            <Money label={t("contract.fixedSupply")} unit={t("unit.perMonth")} value={contract.fixed_supply_month} onChange={(v) => update({ fixed_supply_month: v })} />
+            <Money label={t("contract.grid")} unit={t("unit.perDay")} value={contract.grid_day} onChange={(v) => update({ grid_day: v })} />
             <Money
-              label="Energy tax reduction"
-              unit="€/day"
-              help="Usually a negative amount"
+              label={t("contract.taxReduction")}
+              unit={t("unit.perDay")}
+              help={t("contract.taxReductionHelp")}
               value={contract.tax_reduction_day}
               onChange={(v) => update({ tax_reduction_day: v })}
             />
           </div>
         </Section>
 
-        <Section title="Gas">
+        <Section title={t("contract.gas")}>
           <label className="flex items-center gap-3 text-sm">
             <input
               type="checkbox"
@@ -361,13 +350,13 @@ export function ContractSettingsPage() {
               checked={contract.gas_enabled}
               onChange={(e) => update({ gas_enabled: e.target.checked })}
             />
-            <span className="font-medium">This contract includes gas</span>
+            <span className="font-medium">{t("contract.gasEnabled")}</span>
           </label>
           {contract.gas_enabled && (
             <div className="grid gap-5 sm:grid-cols-3">
-              <Money label="Gas price" unit="€/m³" help="Supply cost plus energy tax" value={contract.gas_price} onChange={(v) => update({ gas_price: v })} />
-              <Money label="Fixed supply costs" unit="€/month" value={contract.gas_fixed_month} onChange={(v) => update({ gas_fixed_month: v })} />
-              <Money label="Grid operator costs" unit="€/day" value={contract.gas_grid_day} onChange={(v) => update({ gas_grid_day: v })} />
+              <Money label={t("contract.gasPrice")} unit="€/m³" help={t("contract.gasPriceHelp")} value={contract.gas_price} onChange={(v) => update({ gas_price: v })} />
+              <Money label={t("contract.fixedSupply")} unit={t("unit.perMonth")} value={contract.gas_fixed_month} onChange={(v) => update({ gas_fixed_month: v })} />
+              <Money label={t("contract.grid")} unit={t("unit.perDay")} value={contract.gas_grid_day} onChange={(v) => update({ gas_grid_day: v })} />
             </div>
           )}
         </Section>
@@ -380,13 +369,13 @@ export function ContractSettingsPage() {
           )}
           {saved && !dirty && (
             <span className="flex items-center gap-1.5 text-sm text-export sm:mr-auto">
-              <Check className="size-4" /> Saved. Costs are now calculated with these rates.
+              <Check className="size-4" /> {t("contract.saved")}
             </span>
           )}
-          {!saved && dirty && <span className="text-sm text-muted sm:mr-auto">Unsaved changes</span>}
+          {!saved && dirty && <span className="text-sm text-muted sm:mr-auto">{t("contract.unsaved")}</span>}
           <Button type="submit" variant="primary" disabled={!dirty || save.isPending}>
             {save.isPending && <LoaderCircle className="size-4 animate-spin" />}
-            Save contract
+            {t("contract.save")}
           </Button>
         </div>
       </form>
@@ -439,10 +428,11 @@ function Money({
   value: number;
   onChange: (v: number) => void;
 }) {
-  const [text, setText] = useState(() => (value ? String(value) : ""));
+  const show = (v: number) => (v ? String(v).replace(".", decimalSeparator()) : "");
+  const [text, setText] = useState(() => show(value));
   useEffect(() => {
     // Keep in sync when switching contracts, without fighting the user's typing.
-    if (Number(text.replace(",", ".")) !== value) setText(value ? String(value) : "");
+    if (Number(text.replace(",", ".")) !== value) setText(show(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
@@ -452,7 +442,7 @@ function Money({
         <input
           inputMode="decimal"
           className={cn(inputClass, "tabular pr-16")}
-          placeholder="0.000000"
+          placeholder={`0${decimalSeparator()}000000`}
           value={text}
           onChange={(e) => {
             const raw = e.target.value;
@@ -468,4 +458,8 @@ function Money({
       </div>
     </Field>
   );
+}
+
+function decimalSeparator(): string {
+  return num(1.5, 1).includes(",") ? "," : ".";
 }

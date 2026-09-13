@@ -5,6 +5,10 @@ import { Link } from "react-router";
 import { Button, Card, CardHeader, cn, PageHeader, StatusDot, TextField } from "../components/ui";
 import { api, type DriverInfo, type P1Config, type ProbeResult } from "../lib/api";
 import { powerText, time } from "../lib/format";
+import { t, tDynamic } from "../lib/i18n";
+
+const driverText = (d: DriverInfo, part: "name" | "description") =>
+  tDynamic(`driver.${d.id}.${part}`, d[part]);
 
 export function P1SettingsPage() {
   const queryClient = useQueryClient();
@@ -62,15 +66,17 @@ export function P1SettingsPage() {
   };
 
   const device = live.data?.device;
+  const configured = Boolean(device?.driver);
   const connected = Boolean(device?.connected);
+  const reading = live.data?.reading;
 
   return (
     <>
       <PageHeader
-        title="P1 meter"
+        title={t("p1.title")}
         subtitle={
           <Link to="/settings" className="inline-flex items-center gap-1.5 hover:text-foreground">
-            <ArrowLeft className="size-3.5" /> Settings
+            <ArrowLeft className="size-3.5" /> {t("settings.title")}
           </Link>
         }
       />
@@ -84,29 +90,26 @@ export function P1SettingsPage() {
             <div>
               <div className="flex items-center gap-2 text-[15px] font-semibold">
                 <StatusDot ok={connected} />
-                {!device || device.connection === "Not configured"
-                  ? "No meter configured"
-                  : connected
-                    ? "Receiving data"
-                    : "Not receiving data"}
+                {!configured ? t("p1.noMeter") : connected ? t("p1.receiving") : t("p1.notReceiving")}
               </div>
               <p className="mt-0.5 text-sm text-muted">
-                {device && device.connection !== "Not configured" ? device.connection : "Choose your meter below to start collecting data"}
+                {configured && device ? device.connection : t("p1.chooseBelow")}
               </p>
             </div>
           </div>
-          {live.data?.reading && (
+          {reading && (
             <div className="tabular text-sm text-muted sm:text-right">
-              {powerText(Math.abs(live.data.reading.power_net))}{" "}
-              {live.data.reading.power_net < 0 ? "exporting" : "importing"}
+              {t(reading.power_net < 0 ? "p1.exporting" : "p1.importing", {
+                power: powerText(Math.abs(reading.power_net)),
+              })}
               <br />
-              Last reading {time(live.data.reading.ts, true)}
+              {t("status.lastReading", { time: time(reading.ts, true) })}
             </div>
           )}
         </Card>
 
         <Card>
-          <CardHeader title="Meter type" description="How Jouleflow reads your smart meter" />
+          <CardHeader title={t("p1.meterType")} description={t("p1.meterTypeDescription")} />
           <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-3 sm:p-6">
             {drivers.data?.map((d) => (
               <DriverOption
@@ -121,7 +124,7 @@ export function P1SettingsPage() {
 
         {selected && draft && (
           <Card>
-            <CardHeader title="Connection" description={selected.description} />
+            <CardHeader title={t("p1.connection")} description={driverText(selected, "description")} />
             <form
               className="flex flex-col gap-5 p-5 sm:p-6"
               onSubmit={(e) => {
@@ -129,21 +132,24 @@ export function P1SettingsPage() {
                 if (complete) save.mutate(draft);
               }}
             >
-              {selected.fields.map((f) => (
-                <TextField
-                  key={f.key}
-                  id={`p1-${f.key}`}
-                  label={f.label}
-                  help={f.help}
-                  placeholder={f.placeholder}
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={draft.options[f.key] ?? ""}
-                  onChange={(e) =>
-                    update({ ...draft, options: { ...draft.options, [f.key]: e.target.value } })
-                  }
-                />
-              ))}
+              {selected.fields.map((f) => {
+                const key = `driver.${selected.id}.${f.key}`;
+                return (
+                  <TextField
+                    key={f.key}
+                    id={`p1-${f.key}`}
+                    label={tDynamic(`${key}.label`, f.label)}
+                    help={tDynamic(`${key}.help`, f.help)}
+                    placeholder={tDynamic(`${key}.placeholder`, f.placeholder)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={draft.options[f.key] ?? ""}
+                    onChange={(e) =>
+                      update({ ...draft, options: { ...draft.options, [f.key]: e.target.value } })
+                    }
+                  />
+                );
+              })}
 
               {(test.isPending || probe) && <ProbePanel pending={test.isPending} result={probe} />}
 
@@ -156,7 +162,7 @@ export function P1SettingsPage() {
               <div className="flex flex-col-reverse gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-end">
                 {saved && !dirty && (
                   <span className="flex items-center gap-1.5 text-sm text-export sm:mr-auto">
-                    <Check className="size-4" /> Saved. Jouleflow is now using this meter.
+                    <Check className="size-4" /> {t("p1.saved")}
                   </span>
                 )}
                 <Button
@@ -165,11 +171,11 @@ export function P1SettingsPage() {
                   onClick={() => test.mutate(draft)}
                 >
                   {test.isPending && <LoaderCircle className="size-4 animate-spin" />}
-                  Test connection
+                  {t("p1.test")}
                 </Button>
                 <Button type="submit" variant="primary" disabled={!complete || !dirty || save.isPending}>
                   {save.isPending && <LoaderCircle className="size-4 animate-spin" />}
-                  Save
+                  {t("common.save")}
                 </Button>
               </div>
             </form>
@@ -205,20 +211,20 @@ function DriverOption({
       )}
     >
       <span className="flex w-full items-center justify-between gap-2">
-        <span className="text-sm font-semibold">{driver.name}</span>
+        <span className="text-sm font-semibold">{driverText(driver, "name")}</span>
         {selected ? (
-          <span className="grid size-4 place-items-center rounded-full bg-foreground">
+          <span className="grid size-4 shrink-0 place-items-center rounded-full bg-foreground">
             <Check className="size-3 text-background" strokeWidth={3} />
           </span>
         ) : driver.available ? (
-          <span className="size-4 rounded-full border border-border" />
+          <span className="size-4 shrink-0 rounded-full border border-border" />
         ) : (
           <span className="shrink-0 whitespace-nowrap rounded-full bg-muted-surface px-2 py-0.5 text-[11px] font-medium text-muted">
-            Coming soon
+            {t("common.comingSoon")}
           </span>
         )}
       </span>
-      <span className="text-[13px] leading-snug text-muted">{driver.description}</span>
+      <span className="text-[13px] leading-snug text-muted">{driverText(driver, "description")}</span>
     </button>
   );
 }
@@ -227,33 +233,39 @@ function ProbePanel({ pending, result }: { pending: boolean; result: ProbeResult
   if (pending || !result) {
     return (
       <div className="flex items-center gap-2 rounded-lg bg-muted-surface px-4 py-3 text-sm text-muted">
-        <LoaderCircle className="size-4 animate-spin" /> Connecting to your meter…
+        <LoaderCircle className="size-4 animate-spin" /> {t("p1.connecting")}
       </div>
     );
   }
   if (!result.ok) {
+    const message = result.code
+      ? tDynamic(`probe.${result.code}`, result.error, { url: result.url ?? "" })
+      : result.error;
     return (
       <div className="flex gap-2.5 rounded-lg border border-import/30 bg-import/10 px-4 py-3 text-sm">
         <CircleAlert className="mt-0.5 size-4 shrink-0 text-import" />
-        <span>{result.error}</span>
+        <span>{message}</span>
       </div>
     );
   }
-  const version = result.dsmr_version?.length === 2
-    ? `DSMR ${result.dsmr_version[0]}.${result.dsmr_version[1]}`
-    : result.dsmr_version && `DSMR ${result.dsmr_version}`;
+  const version =
+    result.dsmr_version?.length === 2
+      ? `DSMR ${result.dsmr_version[0]}.${result.dsmr_version[1]}`
+      : result.dsmr_version && `DSMR ${result.dsmr_version}`;
   const facts = [
     result.meter_id,
     version,
     result.power_net_w != null &&
-      `${powerText(Math.abs(result.power_net_w))} ${result.power_net_w < 0 ? "exporting" : "importing"} now`,
-    result.has_gas ? "Gas meter found" : null,
+      t(result.power_net_w < 0 ? "p1.powerExporting" : "p1.powerImporting", {
+        power: powerText(Math.abs(result.power_net_w)),
+      }),
+    result.has_gas ? t("p1.gasFound") : null,
   ].filter(Boolean);
   return (
     <div className="flex gap-2.5 rounded-lg border border-export/30 bg-export/10 px-4 py-3 text-sm">
       <Check className="mt-0.5 size-4 shrink-0 text-export" />
       <div>
-        <div className="font-medium">Connected to your meter</div>
+        <div className="font-medium">{t("p1.connectedTitle")}</div>
         <div className="tabular mt-0.5 text-muted">{facts.join(" · ")}</div>
       </div>
     </div>

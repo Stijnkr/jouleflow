@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 export type Phase = { power: number | null; voltage: number | null; current: number | null };
 
 export type Reading = {
@@ -169,7 +171,7 @@ export type P1ConfigResponse = {
 };
 
 export type ProbeResult =
-  | { ok: false; error: string }
+  | { ok: false; error: string; code?: string; url?: string }
   | {
       ok: true;
       url: string;
@@ -187,7 +189,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new Error(body?.detail ?? `${res.status} ${res.statusText}`);
+    const detail = Array.isArray(body?.detail) ? t("contract.invalid") : body?.detail;
+    throw new Error(detail ?? `${res.status} ${res.statusText}`);
   }
   return res.json() as Promise<T>;
 }

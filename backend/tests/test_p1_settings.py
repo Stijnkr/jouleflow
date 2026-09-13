@@ -60,3 +60,4 @@ def test_probe_reports_unreachable_reader(client):
     ).json()
     assert result["ok"] is False
     assert "127.0.0.1:9" in result["error"]
+    assert result["code"] in {"connect_failed", "no_response"}

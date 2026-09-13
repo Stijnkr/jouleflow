@@ -1,27 +1,28 @@
 import type { ChartOption } from "../components/Chart";
 import type { Bar, PowerPoint } from "./api";
-import { axisPower, energy, euro, powerText, shortDate, time, weekday } from "./format";
+import { axisPower, energy, euro, number, powerText, shortDate, time, weekday } from "./format";
+import { t } from "./i18n";
 import { readTokens } from "./theme";
 
 type Tokens = ReturnType<typeof readTokens>;
 
-function tooltipBase(t: Tokens) {
+function tooltipBase(c: Tokens) {
   return {
-    backgroundColor: t.card,
-    borderColor: t.border,
+    backgroundColor: c.card,
+    borderColor: c.border,
     borderWidth: 1,
     padding: [8, 12],
-    textStyle: { color: t.foreground, fontSize: 12, fontFamily: "Inter Variable, sans-serif" },
+    textStyle: { color: c.foreground, fontSize: 12, fontFamily: "Inter Variable, sans-serif" },
     extraCssText: "border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);",
   };
 }
 
-function axisBase(t: Tokens) {
+function axisBase(c: Tokens) {
   return {
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { color: t.subtle, fontSize: 11, fontFamily: "Inter Variable, sans-serif" },
-    splitLine: { lineStyle: { color: t.gridLine } },
+    axisLabel: { color: c.subtle, fontSize: 11, fontFamily: "Inter Variable, sans-serif" },
+    splitLine: { lineStyle: { color: c.gridLine } },
   };
 }
 
@@ -34,9 +35,9 @@ export function powerChartOption(
   points: PowerPoint[],
   opts: { start: number; end: number; bucketLabel: "time" | "datetime" },
 ): ChartOption {
-  const t = readTokens();
+  const c = readTokens();
   const hasExport = points.some((p) => p[2] > 0);
-  const base = axisBase(t);
+  const base = axisBase(c);
   const area = (color: string) => ({
     color: {
       type: "linear",
@@ -55,18 +56,18 @@ export function powerChartOption(
     animation: false,
     grid: { left: 8, right: 12, top: 12, bottom: 4, containLabel: true },
     tooltip: {
-      ...tooltipBase(t),
+      ...tooltipBase(c),
       trigger: "axis",
-      axisPointer: { type: "line", lineStyle: { color: t.border } },
+      axisPointer: { type: "line", lineStyle: { color: c.border } },
       formatter: (params: { value: [number, number]; seriesName: string; color: string }[]) => {
         if (!params.length) return "";
         const ts = params[0].value[0] / 1000;
         const head =
           opts.bucketLabel === "time" ? time(ts, true) : `${weekday(ts)} ${shortDate(ts)}, ${time(ts)}`;
         const rows = params
-          .filter((p) => Math.abs(p.value[1]) > 0.5 || p.seriesName === "Grid import")
+          .filter((p) => Math.abs(p.value[1]) > 0.5 || p.seriesName === t("legend.gridImport"))
           .map((p) => `${dot(p.color)}${p.seriesName} <b style="margin-left:8px">${powerText(Math.abs(p.value[1]))}</b>`);
-        return `<div style="color:${t.muted};margin-bottom:4px">${head}</div>${rows.join("<br/>")}`;
+        return `<div style="color:${c.muted};margin-bottom:4px">${head}</div>${rows.join("<br/>")}`;
       },
     },
     xAxis: {
@@ -75,7 +76,7 @@ export function powerChartOption(
       max: opts.end * 1000,
       ...base,
       splitLine: { show: false },
-      axisLine: { show: true, lineStyle: { color: t.border } },
+      axisLine: { show: true, lineStyle: { color: c.border } },
       axisLabel: {
         ...base.axisLabel,
         hideOverlap: true,
@@ -91,25 +92,25 @@ export function powerChartOption(
     },
     series: [
       {
-        name: "Grid import",
+        name: t("legend.gridImport"),
         type: "line",
         showSymbol: false,
         smooth: 0.25,
         sampling: "lttb",
-        lineStyle: { width: 1.75, color: t.import },
-        itemStyle: { color: t.import },
-        areaStyle: area(t.import),
+        lineStyle: { width: 1.75, color: c.import },
+        itemStyle: { color: c.import },
+        areaStyle: area(c.import),
         data: points.map((p) => [p[0] * 1000, p[1]]),
       },
       {
-        name: "Grid export",
+        name: t("legend.gridExport"),
         type: "line",
         showSymbol: false,
         smooth: 0.25,
         sampling: "lttb",
-        lineStyle: { width: hasExport ? 1.75 : 0, color: t.export },
-        itemStyle: { color: t.export },
-        areaStyle: area(t.export),
+        lineStyle: { width: hasExport ? 1.75 : 0, color: c.export },
+        itemStyle: { color: c.export },
+        areaStyle: area(c.export),
         data: points.map((p) => [p[0] * 1000, -p[2]]),
       },
     ],
@@ -122,23 +123,23 @@ export function energyBarsOption(
   label: (ts: number) => string,
   tooltipLabel: (ts: number) => string,
 ): ChartOption {
-  const t = readTokens();
-  const base = axisBase(t);
+  const c = readTokens();
+  const base = axisBase(c);
   return {
     animationDuration: 300,
     grid: { left: 8, right: 12, top: 12, bottom: 4, containLabel: true },
     tooltip: {
-      ...tooltipBase(t),
+      ...tooltipBase(c),
       trigger: "axis",
-      axisPointer: { type: "shadow", shadowStyle: { color: `${t.border}66` } },
+      axisPointer: { type: "shadow", shadowStyle: { color: `${c.border}66` } },
       formatter: (params: { dataIndex: number }[]) => {
         const b = bars[params[0].dataIndex];
-        const rows = [`${dot(t.import)}Imported <b style="margin-left:8px">${energy(b[1])} kWh</b>`];
-        if (b[2]) rows.push(`${dot(t.export)}Exported <b style="margin-left:8px">${energy(b[2])} kWh</b>`);
-        if (b[3] != null) rows.push(`${dot(t.gas)}Gas <b style="margin-left:8px">${energy(b[3], 3)} m³</b>`);
+        const rows = [`${dot(c.import)}${t("chart.imported")} <b style="margin-left:8px">${energy(b[1])} kWh</b>`];
+        if (b[2]) rows.push(`${dot(c.export)}${t("chart.exported")} <b style="margin-left:8px">${energy(b[2])} kWh</b>`);
+        if (b[3] != null) rows.push(`${dot(c.gas)}${t("chart.gas")} <b style="margin-left:8px">${energy(b[3], 3)} m³</b>`);
         if (b[4] != null)
-          rows.push(`<span style="display:inline-block;width:14px"></span>Cost <b style="margin-left:8px">${euro(b[4])}</b>`);
-        return `<div style="color:${t.muted};margin-bottom:4px">${tooltipLabel(b[0])}</div>${rows.join("<br/>")}`;
+          rows.push(`<span style="display:inline-block;width:14px"></span>${t("chart.cost")} <b style="margin-left:8px">${euro(b[4])}</b>`);
+        return `<div style="color:${c.muted};margin-bottom:4px">${tooltipLabel(b[0])}</div>${rows.join("<br/>")}`;
       },
     },
     xAxis: {
@@ -152,23 +153,23 @@ export function energyBarsOption(
       type: "value",
       ...base,
       splitNumber: 3,
-      axisLabel: { ...base.axisLabel, formatter: (v: number) => `${v < 0 ? "−" : ""}${Math.abs(v)}` },
+      axisLabel: { ...base.axisLabel, formatter: (v: number) => `${v < 0 ? "−" : ""}${number(Math.abs(v))}` },
     },
     series: [
       {
-        name: "Imported",
+        name: t("chart.imported"),
         type: "bar",
         stack: "energy",
         barMaxWidth: 28,
-        itemStyle: { color: t.import, borderRadius: [3, 3, 0, 0] },
+        itemStyle: { color: c.import, borderRadius: [3, 3, 0, 0] },
         data: bars.map((b) => b[1]),
       },
       {
-        name: "Exported",
+        name: t("chart.exported"),
         type: "bar",
         stack: "energy",
         barMaxWidth: 28,
-        itemStyle: { color: t.export, borderRadius: [0, 0, 3, 3] },
+        itemStyle: { color: c.export, borderRadius: [0, 0, 3, 3] },
         data: bars.map((b) => (b[2] == null ? null : -b[2])),
       },
     ],

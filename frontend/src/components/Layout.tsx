@@ -3,34 +3,42 @@ import { Activity, ChartColumn, Plug, SlidersHorizontal, Zap } from "lucide-reac
 import { NavLink, Outlet } from "react-router";
 import { api } from "../lib/api";
 import { time } from "../lib/format";
+import { t } from "../lib/i18n";
 import { useLive, useNow } from "../lib/live";
 import { cn, StatusDot } from "./ui";
 
 const nav = [
-  { to: "/", label: "Live", icon: Activity },
-  { to: "/history", label: "History", icon: ChartColumn },
-  { to: "/devices", label: "Devices", icon: Plug },
-  { to: "/settings", label: "Settings", icon: SlidersHorizontal },
-];
+  { to: "/", label: "nav.live", icon: Activity },
+  { to: "/history", label: "nav.history", icon: ChartColumn },
+  { to: "/devices", label: "nav.devices", icon: Plug },
+  { to: "/settings", label: "nav.settings", icon: SlidersHorizontal },
+] as const;
 
 function MeterStatus() {
   const { reading, connected } = useLive();
   const now = useNow();
   const { data } = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 30_000 });
   const fresh = connected && reading != null && now - reading.ts < 15;
-  const via = data?.device.connection.split(" · ")[0] ?? "P1 reader";
+  const configured = Boolean(data?.device.driver);
+  const via = data?.device.connection.split(" · ")[0] ?? "P1";
 
   return (
     <div className="rounded-lg border border-border p-4">
       <div className="flex items-center gap-2 text-sm font-semibold">
         <StatusDot ok={fresh} />
-        P1 meter
+        {t("status.p1")}
       </div>
       <p className="mt-2 text-[13px] leading-relaxed text-muted">
-        {fresh ? `Connected via ${via}` : connected ? "Waiting for meter data" : "Reconnecting…"}
+        {data && !configured
+          ? t("status.notConfigured")
+          : fresh
+            ? t("status.connectedVia", { via })
+            : connected
+              ? t("status.waiting")
+              : t("status.reconnecting")}
         <br />
         <span className="tabular">
-          {reading ? `Last reading ${time(reading.ts, true)}` : "No readings yet"}
+          {reading ? t("status.lastReading", { time: time(reading.ts, true) }) : t("status.noReadings")}
         </span>
       </p>
     </div>
@@ -63,7 +71,7 @@ export function Layout() {
               {({ isActive }) => (
                 <>
                   <Icon className={cn("size-[18px]", isActive && "text-import")} strokeWidth={1.75} />
-                  {label}
+                  {t(label)}
                 </>
               )}
             </NavLink>
@@ -94,7 +102,7 @@ export function Layout() {
             {({ isActive }) => (
               <>
                 <Icon className={cn("size-5", isActive && "text-import")} strokeWidth={1.75} />
-                {label}
+                {t(label)}
               </>
             )}
           </NavLink>

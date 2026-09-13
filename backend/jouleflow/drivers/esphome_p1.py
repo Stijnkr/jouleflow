@@ -70,14 +70,15 @@ class EspHomeP1Driver(MeterDriver):
         try:
             driver = cls.from_options(options)
         except ValueError as exc:
-            raise ProbeError(str(exc)) from exc
+            raise ProbeError(str(exc), "invalid_address") from exc
 
         async def read(client: httpx.AsyncClient) -> None:
             async with client.stream("GET", f"{driver.url}/events") as response:
                 if response.status_code == 404:
                     raise ProbeError(
                         "The device answered, but it doesn't look like an ESPHome reader "
-                        "with the web server enabled."
+                        "with the web server enabled.",
+                        "not_esphome",
                     )
                 response.raise_for_status()
                 driver._connected = True
@@ -108,14 +109,16 @@ class EspHomeP1Driver(MeterDriver):
                         if driver._connected:
                             raise ProbeError(
                                 "Connected to the reader, but no meter data came in. "
-                                "Check that it is plugged into the P1 port of your smart meter."
+                                "Check that it is plugged into the P1 port of your smart meter.",
+                                "no_data",
                             ) from exc
                         raise ProbeError(
-                            f"No response from {driver.url}. Check the address."
+                            f"No response from {driver.url}. Check the address.", "no_response"
                         ) from exc
                 except httpx.HTTPError as exc:
                     raise ProbeError(
-                        f"Could not connect to {driver.url}: {exc or 'connection failed'}"
+                        f"Could not connect to {driver.url}: {exc or 'connection failed'}",
+                        "connect_failed",
                     ) from exc
 
         reading = driver.snapshot()

@@ -162,7 +162,8 @@ def create_app(cfg: Settings = settings) -> FastAPI:
         try:
             found = await resolve(config).probe(config.options)
         except ProbeError as exc:
-            return {"ok": False, "error": str(exc)}
+            url = config.options.get("host", "")
+            return {"ok": False, "error": str(exc), "code": exc.code, "url": url}
         return {"ok": True, **found}
 
     @app.put("/api/p1/config")
