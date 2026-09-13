@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Gauge } from "lucide-react";
+import { ChevronRight, Gauge, Receipt } from "lucide-react";
 import { Link } from "react-router";
 import { Card, CardHeader, PageHeader, Row, Segmented, StatusDot } from "../components/ui";
 import { api } from "../lib/api";
@@ -11,6 +11,8 @@ export function SettingsPage() {
   const { data: sys } = useQuery({ queryKey: ["system"], queryFn: api.system, refetchInterval: 30_000 });
   const { data: live } = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 10_000 });
   const device = live?.device;
+  const { data: tariffs } = useQuery({ queryKey: ["tariffs"], queryFn: api.tariffs });
+  const contract = tariffs?.contracts.at(-1);
 
   return (
     <>
@@ -36,6 +38,21 @@ export function SettingsPage() {
                   {device.connected ? "Connected" : "Offline"}
                 </span>
               )}
+              <ChevronRight className="size-4 text-subtle" />
+            </Link>
+            <Link
+              to="/settings/contract"
+              className="-mx-3 flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted-surface"
+            >
+              <Receipt className="size-5 text-import" strokeWidth={1.75} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">Energy contract</div>
+                <div className="truncate text-[13px] text-muted">
+                  {contract
+                    ? `${contract.name || "Contract"} · since ${contract.start}`
+                    : "Add your rates to see what your energy costs"}
+                </div>
+              </div>
               <ChevronRight className="size-4 text-subtle" />
             </Link>
           </div>

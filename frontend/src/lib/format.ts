@@ -58,6 +58,12 @@ export function monthName(ts: number, style: "short" | "long" = "short"): string
   return new Date(ts * 1000).toLocaleDateString(locale, { month: style });
 }
 
+export function euro(value: number | null | undefined, digits = 2): string {
+  if (value == null) return "—";
+  const sign = value < 0 ? "−" : "";
+  return `${sign}€${Math.abs(value).toFixed(digits)}`;
+}
+
 export function bytes(n: number | undefined): string {
   if (n == null) return "—";
   const units = ["B", "KB", "MB", "GB", "TB"];

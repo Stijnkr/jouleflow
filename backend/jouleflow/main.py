@@ -29,6 +29,7 @@ from .drivers import (
     list_drivers,
 )
 from .storage import Storage
+from .tariffs import TariffSettings
 
 log = logging.getLogger("jouleflow")
 
@@ -175,9 +176,22 @@ def create_app(cfg: Settings = settings) -> FastAPI:
         log.info("P1 meter reconfigured: %s", driver.status().connection)
         return p1_status()
 
+    tariffs = TariffSettings.model_validate(storage.get_setting("tariffs") or {})
+
+    @app.get("/api/tariffs")
+    async def get_tariffs() -> TariffSettings:
+        return tariffs
+
+    @app.put("/api/tariffs")
+    async def put_tariffs(new: TariffSettings) -> TariffSettings:
+        nonlocal tariffs
+        await asyncio.to_thread(storage.set_setting, "tariffs", new.model_dump(mode="json"))
+        tariffs = new
+        return tariffs
+
     @app.get("/api/summary")
     async def summary() -> dict:
-        return await asyncio.to_thread(queries.today_summary, storage, int(time.time()))
+        return await asyncio.to_thread(queries.today_summary, storage, int(time.time()), tariffs)
 
     @app.get("/api/power")
     async def power(range: queries.Range = "hour") -> dict:  # noqa: A002
@@ -192,7 +206,7 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             anchor = date.fromisoformat(date_) if date_ else datetime.now(storage.tz).date()
         except ValueError as exc:
             raise HTTPException(400, "date must be YYYY-MM-DD") from exc
-        return await asyncio.to_thread(queries.history, storage, period, anchor)
+        return await asyncio.to_thread(queries.history, storage, period, anchor, tariffs)
 
     @app.get("/api/devices")
     async def devices() -> list[dict]:

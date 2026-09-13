@@ -11,7 +11,11 @@ Jouleflow is an open-source home energy management system (EMS). It:
 - learns the home's usage patterns and forecasts consumption and solar production
 - steers devices based on **fixed or dynamic** tariffs, forecasts and user-defined **time windows**
 
-**Current focus (Phase 1):** read the P1 meter (DSMR), store the data well, and show live and historical charts in the web app. Don't build later-phase features (tariffs, control, forecasting) unless asked. Do keep the design open for them.
+**Done:** Phase 1 (P1 meter via ESPHome readers, tiered SQLite storage, live + history web app) and the first part of Phase 2 (P1 meter settings, fixed-rate energy contracts and costs).
+
+**Current focus (Phase 2):** tariffs & insight. Don't build later-phase features (control, forecasting) unless asked. Do keep the design open for them.
+
+Key modules: `backend/jouleflow/drivers/` (meter drivers + `registry.py`), `storage.py` (schema, rollups), `queries.py` (read side), `tariffs.py` (contracts and cost calculation), `main.py` (API). User settings (P1 meter, contracts) live in the database `meta` table, never in the repo.
 
 **Target hardware:** Raspberry Pi now, dedicated Jouleflow hardware with built-in I/O later. Everything must run well on low-power ARM devices, fully local, without cloud dependencies.
 

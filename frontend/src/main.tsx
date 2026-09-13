@@ -6,6 +6,7 @@ import { Layout } from "./components/Layout";
 import "./index.css";
 import { LiveProvider } from "./lib/live";
 import { ThemeProvider } from "./lib/theme";
+import { ContractSettingsPage } from "./pages/ContractSettings";
 import { DevicesPage } from "./pages/Devices";
 import { HistoryPage } from "./pages/History";
 import { LivePage } from "./pages/Live";
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
       { path: "/devices", element: <DevicesPage /> },
       { path: "/settings", element: <SettingsPage /> },
       { path: "/settings/p1", element: <P1SettingsPage /> },
+      { path: "/settings/contract", element: <ContractSettingsPage /> },
     ],
   },
 ]);

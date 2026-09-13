@@ -3,9 +3,9 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Chart } from "../components/Chart";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
-import { api, type History, type Period } from "../lib/api";
+import { api, type Cost, type History, type Period } from "../lib/api";
 import { energyBarsOption, powerChartOption } from "../lib/charts";
-import { energy, isoDate, longDate, monthName, powerText, shortDate, time, weekday } from "../lib/format";
+import { energy, euro, isoDate, longDate, monthName, powerText, shortDate, time, weekday } from "../lib/format";
 import { useTheme } from "../lib/theme";
 
 const PERIODS: { value: Period; label: string }[] = [
@@ -153,13 +153,17 @@ export function HistoryPage() {
             period={period}
             lowerIsGood={false}
           />
-          <TotalCard
-            label="Net usage"
-            value={h?.totals.net}
-            previous={h?.previous.net}
-            period={period}
-            lowerIsGood
-          />
+          {h?.totals.cost ? (
+            <CostCard cost={h.totals.cost} previous={h.previous.cost} period={period} />
+          ) : (
+            <TotalCard
+              label="Net usage"
+              value={h?.totals.net}
+              previous={h?.previous.net}
+              period={period}
+              lowerIsGood
+            />
+          )}
           <Card className="p-5 sm:p-6">
             <div className="text-sm text-muted">Peak power</div>
             <Value
@@ -216,6 +220,31 @@ export function HistoryPage() {
         )}
       </div>
     </>
+  );
+}
+
+function CostCard({ cost, previous, period }: { cost: Cost; previous: Cost | null; period: Period }) {
+  const energyCost = cost.import - cost.export_credit + cost.export_cost + cost.gas;
+  let comparison: React.ReactNode = `Energy ${euro(energyCost)} · Fixed ${euro(cost.fixed)}`;
+  if (previous && previous.total > 0) {
+    const pct = ((cost.total - previous.total) / previous.total) * 100;
+    comparison = (
+      <span className={pct < 0 ? "text-export" : "text-import"}>
+        {Math.abs(Math.round(pct))}% {pct < 0 ? "less" : "more"} than {PREVIOUS_LABEL[period]}
+      </span>
+    );
+  }
+  return (
+    <Card className="p-5 sm:p-6">
+      <div className="text-sm text-muted">Costs</div>
+      <Value className="mt-3" value={euro(cost.total)} />
+      <div className="tabular mt-3 truncate text-sm text-muted">{comparison}</div>
+      {previous && previous.total > 0 && (
+        <div className="tabular mt-1 truncate text-xs text-subtle">
+          Energy {euro(energyCost)} · Fixed {euro(cost.fixed)}
+        </div>
+      )}
+    </Card>
   );
 }
 

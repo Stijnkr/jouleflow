@@ -31,7 +31,14 @@ export type Summary = {
   today: Energy;
   yesterday_same_time: Energy;
   yesterday: Energy;
-  change_pct: { import: number | null; export: number | null; gas: number | null };
+  change_pct: {
+    import: number | null;
+    export: number | null;
+    gas: number | null;
+    cost: number | null;
+  };
+  cost_today: Cost | null;
+  rate_now: RateNow | null;
   peak_import: { ts: number; w: number } | null;
   peak_export: { ts: number; w: number } | null;
   export_window: { start: number; end: number } | null;
@@ -64,16 +71,18 @@ export type Totals = {
   peak_export_w: number | null;
 };
 
+export type Bar = [number, number | null, number | null, number | null, number | null];
+
 export type History = {
   period: Period;
   anchor: string;
   start: number;
   end: number;
-  /** [bucket start, import kWh, export kWh, gas m³] */
-  bars: [number, number | null, number | null, number | null][];
+  /** [bucket start, import kWh, export kWh, gas m³, cost €] */
+  bars: Bar[];
   power: PowerPoint[];
-  totals: Totals;
-  previous: Totals & { start: number; end: number };
+  totals: Totals & { cost: Cost | null };
+  previous: Totals & { start: number; end: number; cost: Cost | null };
   first_data: number | null;
 };
 
@@ -89,6 +98,51 @@ export type SystemInfo = {
   retention: { raw_days: number; minute_days: number; hourly: string; daily: string };
   rows: { samples?: number; minutes?: number; hours?: number; days?: number; since?: number | null };
 };
+
+export type Cost = {
+  import: number;
+  export_credit: number;
+  export_cost: number;
+  gas: number;
+  fixed: number;
+  total: number;
+};
+
+export type RateNow = {
+  rate: "single" | "normal" | "low";
+  import_price: number;
+  export_value: number;
+  netting: boolean;
+  contract: string;
+  contract_end: string | null;
+};
+
+export type FeedInPeriod = { start: string; compensation: number; cost: number };
+
+export type Contract = {
+  name: string;
+  start: string;
+  end: string | null;
+  meter: "single" | "dual";
+  supply_single: number;
+  supply_normal: number;
+  supply_low: number;
+  energy_tax: number;
+  surcharge: number;
+  normal_start_hour: number;
+  normal_end_hour: number;
+  netting_until: string | null;
+  feed_in: FeedInPeriod[];
+  fixed_supply_month: number;
+  grid_day: number;
+  tax_reduction_day: number;
+  gas_enabled: boolean;
+  gas_price: number;
+  gas_fixed_month: number;
+  gas_grid_day: number;
+};
+
+export type TariffSettings = { contracts: Contract[] };
 
 export type DriverField = {
   key: string;
@@ -148,6 +202,9 @@ export const api = {
     get<History>(`/api/history?period=${period}&date=${date}`),
   devices: () => get<DeviceStatus[]>("/api/devices"),
   system: () => get<SystemInfo>("/api/system"),
+  tariffs: () => get<TariffSettings>("/api/tariffs"),
+  saveTariffs: (settings: TariffSettings) =>
+    request<TariffSettings>("/api/tariffs", { method: "PUT", body: JSON.stringify(settings) }),
   p1Drivers: () => get<DriverInfo[]>("/api/p1/drivers"),
   p1Config: () => get<P1ConfigResponse>("/api/p1/config"),
   p1Test: (config: P1Config) =>

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime, timedelta
 from typing import Literal
 
 from .storage import COUNTERS, Storage
+from .tariffs import TariffSettings, bucket_cost, current_rate, day_of, sum_costs
 
 Range = Literal["hour", "day", "week"]
 Period = Literal["day", "week", "month", "year"]
@@ -65,7 +67,17 @@ def energy_between(storage: Storage, t0: int, t1: int) -> dict:
     if start is None:
         start = earliest_counters(storage)
     if end is None or start is None or start["ts"] > t1:
-        return {"import": None, "export": None, "gas": None}
+        return dict.fromkeys(
+            (
+                "import",
+                "export",
+                "gas",
+                "import_low",
+                "import_normal",
+                "export_low",
+                "export_normal",
+            )
+        )
 
     def diff(*keys: str) -> float | None:
         e = _sum(*(end[k] for k in keys))
@@ -76,7 +88,30 @@ def energy_between(storage: Storage, t0: int, t1: int) -> dict:
         "import": _round(diff("e_imp_t1", "e_imp_t2")),
         "export": _round(diff("e_exp_t1", "e_exp_t2")),
         "gas": _round(diff("gas")),
+        "import_low": _round(diff("e_imp_t1")),
+        "import_normal": _round(diff("e_imp_t2")),
+        "export_low": _round(diff("e_exp_t1")),
+        "export_normal": _round(diff("e_exp_t2")),
     }
+
+
+def _energy_cost(
+    tariffs: TariffSettings | None, day: date, energy: dict, fixed_days: float
+) -> dict | None:
+    contract = tariffs.contract_on(day) if tariffs else None
+    if contract is None or energy["import"] is None:
+        return None
+    cost = bucket_cost(
+        contract,
+        day,
+        imp_low=energy["import_low"],
+        imp_normal=energy["import_normal"],
+        exp_low=energy["export_low"],
+        exp_normal=energy["export_normal"],
+        gas=energy["gas"],
+        fixed_days=fixed_days,
+    )
+    return {k: round(v, 2) for k, v in cost.items()}
 
 
 def _change(today: float | None, yesterday: float | None) -> float | None:
@@ -88,7 +123,7 @@ def _change(today: float | None, yesterday: float | None) -> float | None:
 # ---------------------------------------------------------------------- live summary
 
 
-def today_summary(storage: Storage, now: int) -> dict:
+def today_summary(storage: Storage, now: int, tariffs: TariffSettings | None = None) -> dict:
     day_start = storage.local_midnight(now)
     yesterday_start = storage.local_midnight(day_start - 1)
     yesterday_same_time = min(yesterday_start + (now - day_start), day_start)
@@ -96,6 +131,17 @@ def today_summary(storage: Storage, now: int) -> dict:
     today = energy_between(storage, day_start, now)
     yesterday = energy_between(storage, yesterday_start, yesterday_same_time)
     yesterday_full = energy_between(storage, yesterday_start, day_start)
+
+    # Only count fixed costs for the part of the day Jouleflow has been measuring.
+    first = storage.query_one("SELECT min(ts) AS t FROM samples")["t"] or now
+    today_day = day_of(now, storage.tz)
+    cost_today = _energy_cost(tariffs, today_day, today, (now - max(day_start, first)) / 86400)
+    cost_yesterday = _energy_cost(
+        tariffs,
+        day_of(yesterday_start, storage.tz),
+        yesterday,
+        max(yesterday_same_time - max(yesterday_start, first), 0) / 86400,
+    )
 
     peak_import = _peak(storage, "p_imp", day_start)
     peak_export = _peak(storage, "p_exp", day_start)
@@ -115,7 +161,13 @@ def today_summary(storage: Storage, now: int) -> dict:
             "import": _change(today["import"], yesterday["import"]),
             "export": _change(today["export"], yesterday["export"]),
             "gas": _change(today["gas"], yesterday["gas"]),
+            "cost": _change(
+                cost_today["total"] if cost_today else None,
+                cost_yesterday["total"] if cost_yesterday and first <= yesterday_start else None,
+            ),
         },
+        "cost_today": cost_today,
+        "rate_now": current_rate(tariffs, now, storage.tz) if tariffs else None,
         "peak_import": peak_import,
         "peak_export": peak_export,
         "export_window": (
@@ -254,7 +306,60 @@ def _totals(storage: Storage, start: int, end: int) -> dict:
     }
 
 
-def history(storage: Storage, period: Period, anchor: date) -> dict:
+def _row_costs(
+    storage: Storage,
+    tariffs: TariffSettings | None,
+    rows: list,
+    source: str,
+    now: int,
+) -> list[dict | None]:
+    """Cost per rollup row. Fixed costs cover only the measured part of each bucket."""
+    if not tariffs or not tariffs.contracts:
+        return [None] * len(rows)
+    first = storage.query_one("SELECT min(ts) AS t FROM agg_1m")["t"] or now
+    costs: list[dict | None] = []
+    for r in rows:
+        day = day_of(r["ts"], storage.tz)
+        contract = tariffs.contract_on(day)
+        if contract is None:
+            costs.append(None)
+            continue
+        bucket_end = r["ts"] + 3600 if source == "agg_1h" else storage.next_local_midnight(r["ts"])
+        measured = max(min(bucket_end, now) - max(r["ts"], first), 0)
+        costs.append(
+            bucket_cost(
+                contract,
+                day,
+                imp_low=r["d_imp_t1"],
+                imp_normal=r["d_imp_t2"],
+                exp_low=r["d_exp_t1"],
+                exp_normal=r["d_exp_t2"],
+                gas=r["d_gas"],
+                fixed_days=measured / 86400,
+            )
+        )
+    return costs
+
+
+def _period_cost(
+    storage: Storage, tariffs: TariffSettings | None, start: int, end: int, now: int
+) -> dict | None:
+    rows = storage.query(
+        "SELECT ts, d_imp_t1, d_imp_t2, d_exp_t1, d_exp_t2, d_gas FROM agg_1d "
+        "WHERE ts >= ? AND ts < ? ORDER BY ts",
+        (start, end),
+    )
+    return sum_costs([c for c in _row_costs(storage, tariffs, rows, "agg_1d", now) if c])
+
+
+def history(
+    storage: Storage,
+    period: Period,
+    anchor: date,
+    tariffs: TariffSettings | None = None,
+    now: int | None = None,
+) -> dict:
+    now = int(time.time()) if now is None else now
     start, end = period_bounds(storage, period, anchor)
     prev_start, prev_end = period_bounds(storage, period, previous_anchor(period, anchor))
 
@@ -264,10 +369,11 @@ def history(storage: Storage, period: Period, anchor: date) -> dict:
         "WHERE ts >= ? AND ts < ? ORDER BY ts",
         (start, end),
     )
+    row_costs = _row_costs(storage, tariffs, rows, source, now)
 
     starts = _bucket_starts(storage, period, start, end)
-    buckets: dict[int, list] = {s: [s, None, None, None] for s in starts}
-    for r in rows:
+    buckets: dict[int, list] = {s: [s, None, None, None, None] for s in starts}
+    for r, cost in zip(rows, row_costs, strict=True):
         key = r["ts"]
         if period == "year":
             key = max(s for s in starts if s <= r["ts"])
@@ -277,7 +383,10 @@ def history(storage: Storage, period: Period, anchor: date) -> dict:
         b[1] = _sum(b[1], r["d_imp_t1"], r["d_imp_t2"])
         b[2] = _sum(b[2], r["d_exp_t1"], r["d_exp_t2"])
         b[3] = _sum(b[3], r["d_gas"])
-    bars = [[b[0], _round(b[1]), _round(b[2]), _round(b[3])] for b in buckets.values()]
+        b[4] = _sum(b[4], cost["total"] if cost else None)
+    bars = [
+        [b[0], _round(b[1]), _round(b[2]), _round(b[3]), _round(b[4], 2)] for b in buckets.values()
+    ]
 
     power: list[list] = []
     if period == "day":
@@ -301,11 +410,15 @@ def history(storage: Storage, period: Period, anchor: date) -> dict:
         "end": end,
         "bars": bars,
         "power": power,
-        "totals": _totals(storage, start, end),
+        "totals": {
+            **_totals(storage, start, end),
+            "cost": sum_costs([c for c in row_costs if c]),
+        },
         "previous": {
             "start": prev_start,
             "end": prev_end,
             **_totals(storage, prev_start, prev_end),
+            "cost": _period_cost(storage, tariffs, prev_start, prev_end, now),
         },
         "first_data": first,
     }

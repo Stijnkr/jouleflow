@@ -34,7 +34,7 @@ cd jouleflow
 ./deploy/install.sh
 ```
 
-Set the address of your P1 reader in `/etc/jouleflow.env` (`JOULEFLOW_P1_URL`), restart with `sudo systemctl restart jouleflow`, and open `http://<your-pi>.local`.
+Open `http://<your-pi>.local`, then go to **Settings → P1 meter** to connect your meter and **Settings → Energy contract** to enter your rates.
 
 ### Development
 
@@ -47,7 +47,7 @@ cd frontend && npm install && npm run dev      # web app with hot reload, proxie
 
 ## Roadmap
 
-### Phase 1: P1 meter & data foundation 👈 *current focus*
+### Phase 1: P1 meter & data foundation
 - [x] Read the Dutch/Belgian smart meter via the P1 port (DSMR, via ESPHome readers)
 - [x] Store readings reliably and efficiently (raw data + aggregated history)
 - [x] Web app with **live** power and energy charts
@@ -56,9 +56,12 @@ cd frontend && npm install && npm run dev      # web app with hot reload, proxie
 - [ ] Direct USB P1 cable support
 - [ ] Data export (CSV)
 
-### Phase 2: Tariffs & insight
-- [ ] Fixed and dynamic tariff support
-- [ ] Energy costs per hour / day / month
+### Phase 2: Tariffs & insight 👈 *current focus*
+- [x] Fixed-rate energy contracts (normal/low rate, net metering, feed-in rates, fixed costs, gas)
+- [x] Energy costs per hour / day / month / year
+- [x] P1 meter settings with selectable meter types
+- [ ] Dynamic (hourly) tariffs
+- [ ] HomeWizard P1 and USB P1 cable drivers
 - [ ] Solar inverter integration
 
 ### Phase 3: Learning your home

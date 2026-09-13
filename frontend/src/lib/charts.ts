@@ -1,6 +1,6 @@
 import type { ChartOption } from "../components/Chart";
-import type { PowerPoint } from "./api";
-import { axisPower, energy, powerText, shortDate, time, weekday } from "./format";
+import type { Bar, PowerPoint } from "./api";
+import { axisPower, energy, euro, powerText, shortDate, time, weekday } from "./format";
 import { readTokens } from "./theme";
 
 type Tokens = ReturnType<typeof readTokens>;
@@ -118,7 +118,7 @@ export function powerChartOption(
 
 /** Energy bars per bucket: import up, export down. */
 export function energyBarsOption(
-  bars: [number, number | null, number | null, number | null][],
+  bars: Bar[],
   label: (ts: number) => string,
   tooltipLabel: (ts: number) => string,
 ): ChartOption {
@@ -136,6 +136,8 @@ export function energyBarsOption(
         const rows = [`${dot(t.import)}Imported <b style="margin-left:8px">${energy(b[1])} kWh</b>`];
         if (b[2]) rows.push(`${dot(t.export)}Exported <b style="margin-left:8px">${energy(b[2])} kWh</b>`);
         if (b[3] != null) rows.push(`${dot(t.gas)}Gas <b style="margin-left:8px">${energy(b[3], 3)} m³</b>`);
+        if (b[4] != null)
+          rows.push(`<span style="display:inline-block;width:14px"></span>Cost <b style="margin-left:8px">${euro(b[4])}</b>`);
         return `<div style="color:${t.muted};margin-bottom:4px">${tooltipLabel(b[0])}</div>${rows.join("<br/>")}`;
       },
     },

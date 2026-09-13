@@ -5,7 +5,7 @@ import { Chart } from "../components/Chart";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
 import { api, type PowerPoint, type PowerRange, type Reading, type Summary } from "../lib/api";
 import { powerChartOption } from "../lib/charts";
-import { energy, kw, longDate, power, powerText, time } from "../lib/format";
+import { energy, euro, kw, longDate, power, powerText, time } from "../lib/format";
 import { useLive, useNow } from "../lib/live";
 import { useTheme } from "../lib/theme";
 
@@ -64,7 +64,13 @@ export function LivePage() {
           <NowCard reading={current} summary={summary.data} />
           <ImportedCard summary={summary.data} />
           <ExportedCard summary={summary.data} />
-          {hasGas ? <GasCard summary={summary.data} /> : <NetCard summary={summary.data} />}
+          {summary.data?.cost_today ? (
+            <CostCard summary={summary.data} />
+          ) : hasGas ? (
+            <GasCard summary={summary.data} />
+          ) : (
+            <NetCard summary={summary.data} />
+          )}
         </div>
 
         <PowerCard range={range} />
@@ -174,6 +180,30 @@ function GasCard({ summary }: { summary?: Summary }) {
       value={energy(summary?.today.gas)}
       unit="m³"
       footer={<Change pct={summary?.change_pct.gas} lowerIsGood />}
+    />
+  );
+}
+
+const RATE_LABEL = { normal: "normal rate", low: "low rate", single: "per kWh" };
+
+function CostCard({ summary }: { summary: Summary }) {
+  const cost = summary.cost_today!;
+  const rate = summary.rate_now;
+  return (
+    <StatCard
+      label="Cost today"
+      value={euro(cost.total)}
+      unit=""
+      valueClass={cost.total < 0 ? "text-export" : undefined}
+      footer={
+        rate ? (
+          <span title={`Energy ${euro(cost.import - cost.export_credit + cost.export_cost)} · Fixed ${euro(cost.fixed)}`}>
+            Now {euro(rate.import_price, 4)}/kWh · {RATE_LABEL[rate.rate]}
+          </span>
+        ) : (
+          `Fixed ${euro(cost.fixed)} included`
+        )
+      }
     />
   );
 }
