@@ -14,8 +14,9 @@ class Settings(BaseSettings):
     # Local timezone, used for day/week/month/year boundaries.
     timezone: str = "Europe/Amsterdam"
 
-    # P1 meter: an ESPHome-based reader such as the SlimmeLezer.
-    p1_url: str = "http://192.168.3.18"
+    # Initial P1 reader address (ESPHome/SlimmeLezer). Only used until the meter is
+    # configured in the web app, which stores its settings in the database.
+    p1_url: str | None = None
 
     # HTTP server.
     host: str = "0.0.0.0"

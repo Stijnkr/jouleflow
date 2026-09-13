@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardHeader, PageHeader, Row, Segmented } from "../components/ui";
+import { ChevronRight, Gauge } from "lucide-react";
+import { Link } from "react-router";
+import { Card, CardHeader, PageHeader, Row, Segmented, StatusDot } from "../components/ui";
 import { api } from "../lib/api";
 import { bytes, duration, longDate, number } from "../lib/format";
 import { useTheme, type ThemeSetting } from "../lib/theme";
@@ -7,11 +9,38 @@ import { useTheme, type ThemeSetting } from "../lib/theme";
 export function SettingsPage() {
   const { setting, setSetting } = useTheme();
   const { data: sys } = useQuery({ queryKey: ["system"], queryFn: api.system, refetchInterval: 30_000 });
+  const { data: live } = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 10_000 });
+  const device = live?.device;
 
   return (
     <>
       <PageHeader title="Settings" />
       <div className="mx-auto flex max-w-[1000px] flex-col gap-4 p-4 sm:gap-6 sm:p-8">
+        <Card>
+          <CardHeader title="Connections" />
+          <div className="px-5 pt-3 pb-3 sm:px-6">
+            <Link
+              to="/settings/p1"
+              className="-mx-3 flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted-surface"
+            >
+              <Gauge className="size-5 text-import" strokeWidth={1.75} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">P1 meter</div>
+                <div className="truncate text-[13px] text-muted">
+                  {device?.connection ?? "Not configured"}
+                </div>
+              </div>
+              {device && device.connection !== "Not configured" && (
+                <span className="flex items-center gap-2 text-sm text-muted">
+                  <StatusDot ok={device.connected} />
+                  {device.connected ? "Connected" : "Offline"}
+                </span>
+              )}
+              <ChevronRight className="size-4 text-subtle" />
+            </Link>
+          </div>
+        </Card>
+
         <Card>
           <CardHeader title="Appearance" />
           <div className="flex items-center justify-between gap-4 px-5 py-5 sm:px-6">

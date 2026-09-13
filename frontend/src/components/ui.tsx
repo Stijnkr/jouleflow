@@ -141,6 +141,49 @@ export function PageHeader({
   );
 }
 
+const buttonStyles = {
+  primary: "bg-foreground text-background hover:opacity-90",
+  secondary: "border border-border text-foreground hover:bg-muted-surface",
+};
+
+export function Button({
+  variant = "secondary",
+  className,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof buttonStyles }) {
+  return (
+    <button
+      {...props}
+      className={cn(
+        "inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium transition disabled:pointer-events-none disabled:opacity-40",
+        buttonStyles[variant],
+        className,
+      )}
+    />
+  );
+}
+
+export function TextField({
+  id,
+  label,
+  help,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { id: string; label: string; help?: string }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <label htmlFor={id} className="text-sm font-medium">
+        {label}
+      </label>
+      <input
+        id={id}
+        {...props}
+        className="h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none transition placeholder:text-subtle focus:border-foreground/40 focus:ring-2 focus:ring-foreground/10"
+      />
+      {help && <p className="text-[13px] text-muted">{help}</p>}
+    </div>
+  );
+}
+
 export function Row({ label, value }: { label: ReactNode; value: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 py-3 text-sm">

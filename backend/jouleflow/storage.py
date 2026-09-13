@@ -16,11 +16,13 @@ stay exact even across gaps in the data.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from .drivers.base import MeterReading
@@ -126,6 +128,22 @@ class Storage:
     def close(self) -> None:
         with self._lock:
             self._db.close()
+
+    # ------------------------------------------------------------------ settings
+
+    def get_setting(self, key: str) -> Any:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT value FROM meta WHERE key = ?", (f"setting:{key}",)
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def set_setting(self, key: str, value: Any) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                (f"setting:{key}", json.dumps(value)),
+            )
 
     # ------------------------------------------------------------------ time helpers
 

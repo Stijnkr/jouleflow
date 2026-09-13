@@ -20,7 +20,7 @@ if [ ! -f /etc/jouleflow.env ]; then
   echo "==> Creating /etc/jouleflow.env"
   sudo tee /etc/jouleflow.env >/dev/null <<'EOF'
 # Jouleflow settings. Restart after changes: sudo systemctl restart jouleflow
-JOULEFLOW_P1_URL=http://192.168.3.18
+# The P1 meter is configured in the web app under Settings → P1 meter.
 JOULEFLOW_TIMEZONE=Europe/Amsterdam
 EOF
 fi

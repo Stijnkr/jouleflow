@@ -15,15 +15,44 @@ from typing import Any
 
 import httpx
 
-from .base import DeviceStatus, MeterDriver, MeterReading
+from .base import DeviceStatus, DriverField, DriverInfo, MeterDriver, MeterReading, ProbeError
 
 log = logging.getLogger(__name__)
 
 # ESPHome reports power in kW; Jouleflow stores W.
 KW = 1000.0
+PROBE_TIMEOUT = 8.0
+
+
+def normalize_url(host: str) -> str:
+    host = host.strip().rstrip("/")
+    if not host:
+        raise ValueError("Enter the IP address or hostname of your P1 reader")
+    if "://" not in host:
+        host = f"http://{host}"
+    if not host.startswith(("http://", "https://")):
+        raise ValueError("Only http:// and https:// addresses are supported")
+    return host
 
 
 class EspHomeP1Driver(MeterDriver):
+    info = DriverInfo(
+        id="esphome",
+        name="SlimmeLezer / ESPHome",
+        description="Wi-Fi P1 readers running ESPHome, such as the SlimmeLezer and SlimmeLezer+.",
+        fields=(
+            DriverField(
+                key="host",
+                label="IP address or hostname",
+                placeholder="192.168.1.50 or slimmelezer.local",
+                help=(
+                    "Find it in your router or in the ESPHome app. "
+                    "The reader's web server must be enabled."
+                ),
+            ),
+        ),
+    )
+
     def __init__(self, url: str, device_id: str = "p1") -> None:
         self.url = url.rstrip("/")
         self.device_id = device_id
@@ -31,6 +60,74 @@ class EspHomeP1Driver(MeterDriver):
         self._last_update: float | None = None
         self._connected = False
         self._error: str | None = None
+
+    @classmethod
+    def from_options(cls, options: dict[str, str]) -> EspHomeP1Driver:
+        return cls(normalize_url(options.get("host", "")))
+
+    @classmethod
+    async def probe(cls, options: dict[str, str]) -> dict[str, Any]:
+        try:
+            driver = cls.from_options(options)
+        except ValueError as exc:
+            raise ProbeError(str(exc)) from exc
+
+        async def read(client: httpx.AsyncClient) -> None:
+            async with client.stream("GET", f"{driver.url}/events") as response:
+                if response.status_code == 404:
+                    raise ProbeError(
+                        "The device answered, but it doesn't look like an ESPHome reader "
+                        "with the web server enabled."
+                    )
+                response.raise_for_status()
+                driver._connected = True
+                event = ""
+                async for line in response.aiter_lines():
+                    if line.startswith("event:"):
+                        event = line[6:].strip()
+                    elif line.startswith("data:") and event == "state":
+                        driver.handle_state(line[5:].strip())
+                        # ESPHome sends every entity on connect; the firmware version comes last.
+                        if driver.snapshot() is not None and driver._text("esphome_version"):
+                            return
+
+        # Small ESPHome devices sometimes stall a new event stream while serving another
+        # client (such as Jouleflow itself), so try twice before giving up.
+        attempt_timeout = PROBE_TIMEOUT / 2
+        async with httpx.AsyncClient(timeout=httpx.Timeout(attempt_timeout)) as client:
+            for attempt in range(2):
+                try:
+                    await asyncio.wait_for(read(client), attempt_timeout)
+                    break
+                except ProbeError:
+                    raise
+                except (TimeoutError, httpx.TimeoutException) as exc:
+                    if driver.snapshot() is not None:
+                        break
+                    if attempt == 1:
+                        if driver._connected:
+                            raise ProbeError(
+                                "Connected to the reader, but no meter data came in. "
+                                "Check that it is plugged into the P1 port of your smart meter."
+                            ) from exc
+                        raise ProbeError(
+                            f"No response from {driver.url}. Check the address."
+                        ) from exc
+                except httpx.HTTPError as exc:
+                    raise ProbeError(
+                        f"Could not connect to {driver.url}: {exc or 'connection failed'}"
+                    ) from exc
+
+        reading = driver.snapshot()
+        status = driver.status()
+        return {
+            "url": driver.url,
+            "meter_id": status.details.get("meter_id"),
+            "dsmr_version": status.details.get("dsmr_version"),
+            "power_net_w": reading.power_net if reading else None,
+            "has_gas": status.details.get("has_gas"),
+            "wifi_signal_dbm": status.details.get("wifi_signal_dbm"),
+        }
 
     async def run(self) -> None:
         backoff = 1.0
@@ -123,13 +220,19 @@ class EspHomeP1Driver(MeterDriver):
         gas = self._num("gas_consumed")
         return gas if gas is not None else self._num("gas_consumed_belgium")
 
+    def _text(self, key: str) -> str | None:
+        return self._values.get(f"text_sensor-{key}") or None
+
     def status(self) -> DeviceStatus:
-        text = lambda key: self._values.get(f"text_sensor-{key}") or None  # noqa: E731
+        text = self._text
+        host = self.url.removeprefix("http://")
         return DeviceStatus(
             id=self.device_id,
             name="P1 meter",
             kind="p1_meter",
-            connection=f"SlimmeLezer (ESPHome) · {self.url.removeprefix('http://')}",
+            connection=f"{self.info.name} · {host}",
+            driver=self.info.id,
+            options={"host": host},
             connected=self._connected and self.is_fresh(self._last_update),
             last_update=self._last_update,
             error=self._error,

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { BatteryCharging, Car, Gauge, Heater, Sun } from "lucide-react";
+import { BatteryCharging, Car, Gauge, Heater, Settings2, Sun } from "lucide-react";
+import { Link } from "react-router";
 import { Card, CardHeader, PageHeader, Row, StatusDot } from "../components/ui";
 import { api } from "../lib/api";
 import { duration, number, time } from "../lib/format";
@@ -31,10 +32,19 @@ export function DevicesPage() {
                 }
                 description={d.connection}
                 action={
-                  <span className="flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm">
-                    <StatusDot ok={d.connected} />
-                    {d.connected ? "Connected" : "Offline"}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="hidden items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm sm:flex">
+                      <StatusDot ok={d.connected} />
+                      {d.connected ? "Connected" : "Offline"}
+                    </span>
+                    <Link
+                      to="/settings/p1"
+                      aria-label="P1 meter settings"
+                      className="grid size-9 place-items-center rounded-lg border border-border text-muted hover:bg-muted-surface hover:text-foreground"
+                    >
+                      <Settings2 className="size-4" />
+                    </Link>
+                  </div>
                 }
               />
               <div className="divide-y divide-border px-5 pt-3 pb-2 sm:px-6">

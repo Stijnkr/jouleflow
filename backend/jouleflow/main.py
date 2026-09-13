@@ -14,11 +14,20 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from . import __version__, queries
 from .collector import Collector
 from .config import Settings, settings
-from .drivers import EspHomeP1Driver, MeterReading
+from .drivers import (
+    DeviceStatus,
+    EspHomeP1Driver,
+    MeterDriver,
+    MeterReading,
+    ProbeError,
+    get_driver,
+    list_drivers,
+)
 from .storage import Storage
 
 log = logging.getLogger("jouleflow")
@@ -63,11 +72,35 @@ def system_info(storage_path: Path) -> dict:
     return info
 
 
+class P1Config(BaseModel):
+    driver: str
+    options: dict[str, str] = Field(default_factory=dict)
+
+
+def initial_p1_config(storage: Storage, cfg: Settings) -> P1Config | None:
+    """Saved settings win; otherwise fall back to JOULEFLOW_P1_URL for first-time setups."""
+    saved = storage.get_setting("p1")
+    if saved:
+        return P1Config.model_validate(saved)
+    if cfg.p1_url:
+        return P1Config(driver=EspHomeP1Driver.info.id, options={"host": cfg.p1_url})
+    return None
+
+
+def build_driver(config: P1Config | None) -> MeterDriver | None:
+    if config is None:
+        return None
+    try:
+        return get_driver(config.driver).from_options(config.options)
+    except ValueError:
+        log.exception("Invalid P1 configuration %s", config)
+        return None
+
+
 def create_app(cfg: Settings = settings) -> FastAPI:
     storage = Storage(cfg.db_path, cfg.timezone)
-    driver = EspHomeP1Driver(cfg.p1_url)
     collector = Collector(
-        driver,
+        build_driver(initial_p1_config(storage, cfg)),
         storage,
         flush_interval=cfg.flush_interval,
         raw_retention_days=cfg.raw_retention_days,
@@ -88,6 +121,13 @@ def create_app(cfg: Settings = settings) -> FastAPI:
     app = FastAPI(title="Jouleflow", version=__version__, lifespan=lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 
+    def p1_status() -> dict:
+        if collector.driver is None:
+            return asdict(
+                DeviceStatus(id="p1", name="P1 meter", kind="p1_meter", connection="Not configured")
+            )
+        return asdict(collector.driver.status())
+
     @app.get("/api/live")
     async def live() -> dict:
         reading = collector.latest
@@ -95,8 +135,45 @@ def create_app(cfg: Settings = settings) -> FastAPI:
         return {
             "reading": reading_to_dict(reading) if reading else None,
             "fresh": fresh,
-            "device": asdict(driver.status()),
+            "device": p1_status(),
         }
+
+    @app.get("/api/p1/drivers")
+    async def p1_drivers() -> list[dict]:
+        return list_drivers()
+
+    @app.get("/api/p1/config")
+    async def p1_config() -> dict:
+        driver = collector.driver
+        if driver is None:
+            return {"configured": False, "driver": None, "options": {}}
+        status = driver.status()
+        return {"configured": True, "driver": status.driver, "options": status.options}
+
+    def resolve(config: P1Config) -> type[MeterDriver]:
+        try:
+            return get_driver(config.driver)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/p1/test")
+    async def p1_test(config: P1Config) -> dict:
+        try:
+            found = await resolve(config).probe(config.options)
+        except ProbeError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, **found}
+
+    @app.put("/api/p1/config")
+    async def p1_save(config: P1Config) -> dict:
+        try:
+            driver = resolve(config).from_options(config.options)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        await asyncio.to_thread(storage.set_setting, "p1", config.model_dump())
+        await collector.set_driver(driver)
+        log.info("P1 meter reconfigured: %s", driver.status().connection)
+        return p1_status()
 
     @app.get("/api/summary")
     async def summary() -> dict:
@@ -119,7 +196,7 @@ def create_app(cfg: Settings = settings) -> FastAPI:
 
     @app.get("/api/devices")
     async def devices() -> list[dict]:
-        return [asdict(driver.status())]
+        return [p1_status()]
 
     @app.get("/api/system")
     async def system() -> dict:

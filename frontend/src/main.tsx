@@ -9,6 +9,7 @@ import { ThemeProvider } from "./lib/theme";
 import { DevicesPage } from "./pages/Devices";
 import { HistoryPage } from "./pages/History";
 import { LivePage } from "./pages/Live";
+import { P1SettingsPage } from "./pages/P1Settings";
 import { SettingsPage } from "./pages/Settings";
 
 const queryClient = new QueryClient({
@@ -23,6 +24,7 @@ const router = createBrowserRouter([
       { path: "/history", element: <HistoryPage /> },
       { path: "/devices", element: <DevicesPage /> },
       { path: "/settings", element: <SettingsPage /> },
+      { path: "/settings/p1", element: <P1SettingsPage /> },
     ],
   },
 ]);

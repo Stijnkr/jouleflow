@@ -14,6 +14,8 @@ export type DeviceStatus = {
   name: string;
   kind: string;
   connection: string;
+  driver: string | null;
+  options: Record<string, string>;
   connected: boolean;
   last_update: number | null;
   error: string | null;
@@ -88,11 +90,55 @@ export type SystemInfo = {
   rows: { samples?: number; minutes?: number; hours?: number; days?: number; since?: number | null };
 };
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+export type DriverField = {
+  key: string;
+  label: string;
+  placeholder: string;
+  help: string;
+  required: boolean;
+};
+
+export type DriverInfo = {
+  id: string;
+  name: string;
+  description: string;
+  fields: DriverField[];
+  available: boolean;
+};
+
+export type P1Config = { driver: string; options: Record<string, string> };
+
+export type P1ConfigResponse = {
+  configured: boolean;
+  driver: string | null;
+  options: Record<string, string>;
+};
+
+export type ProbeResult =
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      url: string;
+      meter_id: string | null;
+      dsmr_version: string | null;
+      power_net_w: number | null;
+      has_gas: boolean;
+      wifi_signal_dbm: number | null;
+    };
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `${res.status} ${res.statusText}`);
+  }
   return res.json() as Promise<T>;
 }
+
+const get = <T,>(path: string) => request<T>(path);
 
 export const api = {
   live: () => get<LiveResponse>("/api/live"),
@@ -102,4 +148,10 @@ export const api = {
     get<History>(`/api/history?period=${period}&date=${date}`),
   devices: () => get<DeviceStatus[]>("/api/devices"),
   system: () => get<SystemInfo>("/api/system"),
+  p1Drivers: () => get<DriverInfo[]>("/api/p1/drivers"),
+  p1Config: () => get<P1ConfigResponse>("/api/p1/config"),
+  p1Test: (config: P1Config) =>
+    request<ProbeResult>("/api/p1/test", { method: "POST", body: JSON.stringify(config) }),
+  p1Save: (config: P1Config) =>
+    request<DeviceStatus>("/api/p1/config", { method: "PUT", body: JSON.stringify(config) }),
 };
