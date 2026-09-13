@@ -272,11 +272,6 @@ export function metricChartOption(
         emphasis: { handleStyle: { borderColor: c.foreground } },
       },
     ],
-    // Hidden toolbox that powers drag-to-select zooming on the plot itself.
-    toolbox: {
-      show: false,
-      feature: { dataZoom: { yAxisIndex: "none", filterMode: "weakFilter" } },
-    },
     series,
   };
 }
