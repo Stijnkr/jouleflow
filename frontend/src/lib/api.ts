@@ -88,6 +88,16 @@ export type History = {
   first_data: number | null;
 };
 
+export type PhaseHistory = {
+  period: Period;
+  start: number;
+  end: number;
+  bucket_seconds: number;
+  /** Column names for each point, starting with "ts". */
+  fields: string[];
+  points: (number | null)[][];
+};
+
 export type SystemInfo = {
   version: string;
   model?: string;
@@ -203,6 +213,8 @@ export const api = {
   power: (range: PowerRange) => get<PowerSeries>(`/api/power?range=${range}`),
   history: (period: Period, date: string) =>
     get<History>(`/api/history?period=${period}&date=${date}`),
+  phases: (period: Period, date: string) =>
+    get<PhaseHistory>(`/api/phases?period=${period}&date=${date}`),
   devices: () => get<DeviceStatus[]>("/api/devices"),
   system: () => get<SystemInfo>("/api/system"),
   tariffs: () => get<TariffSettings>("/api/tariffs"),

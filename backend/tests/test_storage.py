@@ -153,3 +153,79 @@ def test_esphome_driver_parses_states():
     assert reading.power_l1 == pytest.approx(-646)
     assert reading.energy_import_t1 == 1837.071
     assert reading.gas is None
+
+
+def test_phase_statistics_are_kept_in_every_rollup(storage):
+    start = local_ts(2026, 9, 13, 12, 0)
+    readings = make_readings(start, 120, import_w=1000)
+    for i, r in enumerate(readings):
+        r.current_l1 = 4.0 if i % 2 else 2.0
+        r.current_l2 = 1.0
+        r.voltage_l2 = 228.0 + (i % 5)
+        r.power_l2 = -500.0 if i < 60 else 300.0
+        r.power_failures = 14
+    storage.insert_samples(readings)
+    storage.rollup_all(start + 180)
+
+    for table in ("agg_1m", "agg_1h", "agg_1d"):
+        row = storage.query_one(f"SELECT * FROM {table} ORDER BY ts DESC LIMIT 1")
+        assert row["i_l1_avg"] == pytest.approx(3.0, abs=0.05), table
+        assert row["i_l1_max"] == 4.0, table
+        assert row["v_l2_min"] == 228.0 and row["v_l2_max"] == 232.0, table
+        assert row["fail_short"] == 14, table
+    hour = storage.query_one("SELECT * FROM agg_1h")
+    assert hour["p_l2_min"] == -500.0 and hour["p_l2_max"] == 300.0
+
+
+def test_migration_from_schema_1_rebuilds_rollups(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.executescript(
+        """
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO meta VALUES ('schema_version', '1');
+        CREATE TABLE samples (ts INTEGER PRIMARY KEY, p_imp REAL NOT NULL, p_exp REAL NOT NULL,
+            p_l1 REAL, p_l2 REAL, p_l3 REAL, v_l1 REAL, v_l2 REAL, v_l3 REAL,
+            i_l1 REAL, i_l2 REAL, i_l3 REAL, e_imp_t1 REAL, e_imp_t2 REAL, e_exp_t1 REAL,
+            e_exp_t2 REAL, gas REAL);
+        CREATE TABLE agg_1m (ts INTEGER PRIMARY KEY, n INTEGER NOT NULL, p_imp_avg REAL);
+        CREATE TABLE agg_1h (ts INTEGER PRIMARY KEY, n INTEGER NOT NULL, p_imp_avg REAL);
+        CREATE TABLE agg_1d (ts INTEGER PRIMARY KEY, n INTEGER NOT NULL, p_imp_avg REAL);
+        """
+    )
+    start = local_ts(2026, 9, 13, 12, 0)
+    db.execute(
+        "INSERT INTO samples (ts, p_imp, p_exp, i_l1, e_imp_t1, e_imp_t2, e_exp_t1, e_exp_t2) "
+        "VALUES (?, 500, 0, 2.5, 10, 0, 0, 0)",
+        (start,),
+    )
+    db.execute("INSERT INTO agg_1m (ts, n, p_imp_avg) VALUES (?, 1, 500)", (start,))
+    db.commit()
+    db.close()
+
+    storage = Storage(path)
+    assert storage.query_one("SELECT count(*) AS c FROM agg_1m")["c"] == 0
+    storage.rollup_all(start + 120)
+    assert storage.query_one("SELECT i_l1_max FROM agg_1m")["i_l1_max"] == 2.5
+    assert storage.query_one("SELECT value FROM meta WHERE key='schema_version'")["value"] == "2"
+    storage.close()
+
+
+def test_phase_history_uses_minutes_for_a_day(storage):
+    start = local_ts(2026, 9, 13, 12, 0)
+    readings = make_readings(start, 180, import_w=800)
+    for r in readings:
+        r.current_l1 = 3.5
+    storage.insert_samples(readings)
+    storage.rollup_all(start + 240)
+
+    day = queries.phase_history(storage, "day", date(2026, 9, 13))
+    assert day["bucket_seconds"] == 60
+    assert len(day["points"]) == 3
+    i_max = day["fields"].index("i_l1_max")
+    assert day["points"][0][i_max] == 3.5
+
+    year = queries.phase_history(storage, "year", date(2026, 9, 13))
+    assert year["bucket_seconds"] == 86400 and len(year["points"]) == 1

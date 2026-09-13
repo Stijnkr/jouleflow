@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import { Chart } from "../components/Chart";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
 import { api, type Cost, type History, type Period } from "../lib/api";
-import { energyBarsOption, powerChartOption } from "../lib/charts";
-import { energy, euro, isoDate, kw, longDate, monthName, powerText, shortDate, time, weekday } from "../lib/format";
+import { energyBarsOption, phaseChartOption, powerChartOption, type PhaseMetric } from "../lib/charts";
+import { energy, euro, isoDate, kw, longDate, monthName, num, powerText, shortDate, time, weekday } from "../lib/format";
 import { t } from "../lib/i18n";
 import { useTheme } from "../lib/theme";
 
@@ -213,6 +213,8 @@ export function HistoryPage() {
           </div>
         </Card>
 
+        <PhaseCard period={period} anchor={isoDate(anchor)} />
+
         {powerOption && (
           <Card>
             <CardHeader title={t("live.power")} description={t("history.powerAverage")} />
@@ -283,6 +285,99 @@ function TotalCard({
       {extra && value != null && previous ? (
         <div className="tabular mt-1 truncate text-xs text-subtle">{extra}</div>
       ) : null}
+    </Card>
+  );
+}
+
+const RESOLUTION: Record<number, "resolution.minute" | "resolution.hour" | "resolution.day"> = {
+  60: "resolution.minute",
+  3600: "resolution.hour",
+  86400: "resolution.day",
+};
+
+const METRIC_DESCRIPTION = {
+  p: "phases.descPower",
+  i: "phases.descCurrent",
+  v: "phases.descVoltage",
+} as const;
+
+function PhaseCard({ period, anchor }: { period: Period; anchor: string }) {
+  const { resolved } = useTheme();
+  const [metric, setMetric] = useState<PhaseMetric>("i");
+  const query = useQuery({
+    queryKey: ["phases", period, anchor],
+    queryFn: () => api.phases(period, anchor),
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  });
+  const data = query.data;
+
+  const option = useMemo(
+    () =>
+      data && data.points.length
+        ? phaseChartOption(data, metric, { bucketLabel: period === "day" ? "time" : "date" })
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, metric, period, resolved],
+  );
+
+  // Extremes per phase over the whole period.
+  const summaries = [1, 2, 3].map((ph) => {
+    if (!data) return null;
+    const values = (name: string) => {
+      const idx = data.fields.indexOf(name);
+      return data.points.map((p) => p[idx]).filter((v): v is number => v != null);
+    };
+    const lows = values(`${metric}_l${ph}_min`);
+    const highs = values(`${metric}_l${ph}_max`);
+    if (!highs.length) return null;
+    const min = lows.length ? Math.min(...lows) : null;
+    const max = Math.max(...highs);
+    if (metric === "i") return t("phases.summaryCurrent", { max: num(max, 1) });
+    if (metric === "v") return t("phases.summaryVoltage", { min: num(min ?? max, 0), max: num(max, 0) });
+    return t("phases.summaryPower", { min: num((min ?? 0) / 1000, 2), max: num(max / 1000, 2) });
+  });
+
+  return (
+    <Card>
+      <CardHeader
+        title={t("phases.title")}
+        description={
+          data
+            ? t(METRIC_DESCRIPTION[metric], { resolution: t(RESOLUTION[data.bucket_seconds] ?? "resolution.hour") })
+            : undefined
+        }
+        action={
+          <Segmented<PhaseMetric>
+            size="sm"
+            value={metric}
+            onChange={setMetric}
+            options={[
+              { value: "p", label: t("phases.metricPower") },
+              { value: "i", label: t("phases.metricCurrent") },
+              { value: "v", label: t("phases.metricVoltage") },
+            ]}
+          />
+        }
+      />
+      <div className="relative px-3 pt-4 sm:px-5">
+        {option ? (
+          <Chart option={option} notMerge className="h-56 w-full sm:h-72" />
+        ) : (
+          <div className="grid h-56 place-items-center text-sm text-muted sm:h-72">
+            {t("history.noData")}
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-2 border-t border-border px-5 py-4 text-sm sm:px-6">
+        {summaries.map((summary, i) => (
+          <div key={i} className="flex min-w-0 items-center gap-2">
+            <span className={cn("size-2.5 shrink-0 rounded-sm", ["bg-l1", "bg-l2", "bg-l3"][i])} />
+            <span className="font-medium">L{i + 1}</span>
+            <span className="tabular truncate text-muted">{summary ?? "—"}</span>
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }

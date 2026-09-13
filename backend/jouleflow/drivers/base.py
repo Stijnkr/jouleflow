@@ -30,6 +30,9 @@ class MeterReading:
     energy_export_t1: float | None = None
     energy_export_t2: float | None = None
     gas: float | None = None
+    # Number of short and long power failures the meter has recorded.
+    power_failures: int | None = None
+    long_power_failures: int | None = None
 
     @property
     def power_net(self) -> float:

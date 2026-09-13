@@ -217,7 +217,13 @@ class EspHomeP1Driver(MeterDriver):
             energy_export_t1=self._num("energy_produced_tariff_1"),
             energy_export_t2=self._num("energy_produced_tariff_2"),
             gas=self._gas(),
+            power_failures=self._int("electricity_failures"),
+            long_power_failures=self._int("long_electricity_failures"),
         )
+
+    def _int(self, key: str) -> int | None:
+        value = self._num(key)
+        return None if value is None else int(value)
 
     def _gas(self) -> float | None:
         gas = self._num("gas_consumed")

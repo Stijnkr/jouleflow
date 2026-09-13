@@ -422,3 +422,57 @@ def history(
         },
         "first_data": first,
     }
+
+
+# ---------------------------------------------------------------------- phases
+
+PHASE_FIELDS = tuple(
+    f"{q}_l{ph}_{fn}"
+    for ph in (1, 2, 3)
+    for q, fns in (
+        ("p", ("avg", "min", "max")),
+        ("v", ("avg", "min", "max")),
+        ("i", ("avg", "max")),
+    )
+    for fn in fns
+)
+
+# Finest resolution that keeps the number of points reasonable for each period.
+PHASE_SOURCES: dict[str, tuple[tuple[str, int], ...]] = {
+    "day": (("agg_1m", 60), ("agg_1h", 3600)),
+    "week": (("agg_1h", 3600),),
+    "month": (("agg_1h", 3600), ("agg_1d", 86400)),
+    "year": (("agg_1d", 86400),),
+}
+
+
+def phase_history(storage: Storage, period: Period, anchor: date) -> dict:
+    """Power, voltage and current per phase over a period, with min/max per bucket."""
+    start, end = period_bounds(storage, period, anchor)
+    rows: list = []
+    bucket = 0
+    for source, seconds in PHASE_SOURCES[period]:
+        rows = storage.query(
+            f"SELECT ts, {', '.join(PHASE_FIELDS)} FROM {source} "
+            "WHERE ts >= ? AND ts < ? ORDER BY ts",
+            (start, end),
+        )
+        bucket = seconds
+        if rows:
+            break
+
+    def rounded(value: float | None, digits: int) -> float | None:
+        return None if value is None else round(value, digits)
+
+    points = [
+        [r["ts"], *(rounded(r[f], 2 if f.startswith("i_") else 1) for f in PHASE_FIELDS)]
+        for r in rows
+    ]
+    return {
+        "period": period,
+        "start": start,
+        "end": end,
+        "bucket_seconds": bucket,
+        "fields": ["ts", *PHASE_FIELDS],
+        "points": points,
+    }

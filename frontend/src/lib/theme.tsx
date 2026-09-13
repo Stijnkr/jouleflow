@@ -84,5 +84,8 @@ export function readTokens() {
     import: v("--import"),
     export: v("--export"),
     gas: v("--gas"),
+    l1: v("--l1"),
+    l2: v("--l2"),
+    l3: v("--l3"),
   };
 }

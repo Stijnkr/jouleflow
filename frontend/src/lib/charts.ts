@@ -1,6 +1,6 @@
 import type { ChartOption } from "../components/Chart";
-import type { Bar, PowerPoint } from "./api";
-import { axisPower, energy, euro, number, powerText, shortDate, time, weekday } from "./format";
+import type { Bar, PhaseHistory, PowerPoint } from "./api";
+import { axisPower, energy, euro, num, number, powerText, shortDate, time, weekday } from "./format";
 import { t } from "./i18n";
 import { readTokens } from "./theme";
 
@@ -173,5 +173,99 @@ export function energyBarsOption(
         data: bars.map((b) => (b[2] == null ? null : -b[2])),
       },
     ],
+  };
+}
+
+export type PhaseMetric = "p" | "i" | "v";
+
+const METRIC_UNIT: Record<PhaseMetric, string> = { p: "kW", i: "A", v: "V" };
+
+/** One line per phase (average), with min/max in the tooltip. */
+export function phaseChartOption(
+  data: PhaseHistory,
+  metric: PhaseMetric,
+  opts: { bucketLabel: "time" | "date" },
+): ChartOption {
+  const c = readTokens();
+  const base = axisBase(c);
+  const colors = [c.l1, c.l2, c.l3];
+  const col = (name: string) => data.fields.indexOf(name);
+  const scale = metric === "p" ? 1000 : 1;
+  const digits = metric === "p" ? 2 : metric === "i" ? 1 : 0;
+  const unit = METRIC_UNIT[metric];
+  const value = (v: number | null | undefined) => (v == null ? "—" : num(v / scale, digits));
+
+  const series = [1, 2, 3].map((ph) => {
+    const avg = col(`${metric}_l${ph}_avg`);
+    return {
+      name: `L${ph}`,
+      type: "line",
+      showSymbol: false,
+      sampling: "lttb",
+      lineStyle: { width: 1.5, color: colors[ph - 1] },
+      itemStyle: { color: colors[ph - 1] },
+      data: data.points.map((p) => [(p[0] as number) * 1000, p[avg] == null ? null : (p[avg] as number) / scale]),
+      ...(metric === "v" && ph === 1
+        ? {
+            markLine: {
+              silent: true,
+              symbol: "none",
+              label: { color: c.subtle, fontSize: 10, formatter: "{c} V" },
+              lineStyle: { color: c.subtle, type: "dashed", width: 1 },
+              data: [{ yAxis: 207 }, { yAxis: 253 }],
+            },
+          }
+        : {}),
+    };
+  });
+
+  return {
+    animation: false,
+    grid: { left: 8, right: 36, top: 16, bottom: 4, containLabel: true },
+    tooltip: {
+      ...tooltipBase(c),
+      trigger: "axis",
+      axisPointer: { type: "line", lineStyle: { color: c.border } },
+      formatter: (params: { dataIndex: number }[]) => {
+        if (!params.length) return "";
+        const point = data.points[params[0].dataIndex];
+        const ts = point[0] as number;
+        const head = opts.bucketLabel === "time" ? time(ts) : `${weekday(ts)} ${shortDate(ts)}`;
+        const rows = [1, 2, 3].map((ph) => {
+          const avg = point[col(`${metric}_l${ph}_avg`)];
+          if (avg == null) return "";
+          const max = point[col(`${metric}_l${ph}_max`)];
+          const minIdx = col(`${metric}_l${ph}_min`);
+          const range =
+            minIdx >= 0
+              ? t("phases.minMax", { min: value(point[minIdx]), max: value(max) })
+              : t("phases.max", { max: value(max) });
+          return `${dot(colors[ph - 1])}L${ph} <b style="margin-left:8px">${value(avg)} ${unit}</b> <span style="color:${c.muted};margin-left:6px">${range}</span>`;
+        });
+        return `<div style="color:${c.muted};margin-bottom:4px">${head}</div>${rows.filter(Boolean).join("<br/>")}`;
+      },
+    },
+    xAxis: {
+      type: "time",
+      min: data.start * 1000,
+      max: data.end * 1000,
+      ...base,
+      splitLine: { show: false },
+      axisLine: { show: true, lineStyle: { color: c.border } },
+      axisLabel: {
+        ...base.axisLabel,
+        hideOverlap: true,
+        formatter: (v: number) => (opts.bucketLabel === "time" ? time(v / 1000) : shortDate(v / 1000)),
+      },
+    },
+    yAxis: {
+      type: "value",
+      scale: metric === "v",
+      ...base,
+      splitNumber: 3,
+      ...(metric === "v" ? { min: (e: { min: number }) => Math.min(Math.floor(e.min - 2), 205), max: (e: { max: number }) => Math.max(Math.ceil(e.max + 2), 255) } : {}),
+      axisLabel: { ...base.axisLabel, formatter: (v: number) => `${num(v, metric === "p" ? 1 : 0)}` },
+    },
+    series,
   };
 }

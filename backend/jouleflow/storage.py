@@ -8,6 +8,9 @@ history stays small and fast to query:
     agg_1h    1-hour rollups                   kept forever
     agg_1d    1-day rollups (local calendar)   kept forever
 
+Every rollup keeps averages, minimums and maximums of power, voltage and current per
+phase (see `STATS`), so phase history stays available after raw samples expire.
+
 Energy is derived from the meter's cumulative counters, never by integrating power.
 Each rollup row stores the counters at the end of its bucket (`e_*`) and the energy
 consumed during the bucket (`d_*`), so totals over any range are a simple SUM and
@@ -17,6 +20,7 @@ stay exact even across gaps in the data.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from collections.abc import Iterable, Sequence
@@ -27,70 +31,78 @@ from zoneinfo import ZoneInfo
 
 from .drivers.base import MeterReading
 
-SCHEMA_VERSION = 1
+log = logging.getLogger(__name__)
 
+SCHEMA_VERSION = 2
+
+PHASES = (1, 2, 3)
+
+# Cumulative energy counters: stored at the end of each bucket, with deltas per bucket.
 COUNTERS = ("e_imp_t1", "e_imp_t2", "e_exp_t1", "e_exp_t2", "gas")
 DELTAS = ("d_imp_t1", "d_imp_t2", "d_exp_t1", "d_exp_t2", "d_gas")
+# Other counters where only the latest value matters.
+EVENT_COUNTERS = ("fail_short", "fail_long")
+LAST_VALUES = (*COUNTERS, *EVENT_COUNTERS)
 
-SAMPLE_COLUMNS = (
-    "ts", "p_imp", "p_exp", "p_l1", "p_l2", "p_l3",
-    "v_l1", "v_l2", "v_l3", "i_l1", "i_l2", "i_l3", *COUNTERS,
-)  # fmt: skip
-
-AGG_COLUMNS = (
-    "ts", "n", "p_imp_avg", "p_imp_max", "p_exp_avg", "p_exp_max",
-    "p_l1_avg", "p_l2_avg", "p_l3_avg", "v_l1_avg", "v_l2_avg", "v_l3_avg",
-    "v_min", "v_max", *COUNTERS, *DELTAS,
-)  # fmt: skip
-
-_AGG_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS {name} (
-    ts INTEGER PRIMARY KEY,
-    n INTEGER NOT NULL,
-    p_imp_avg REAL, p_imp_max REAL, p_exp_avg REAL, p_exp_max REAL,
-    p_l1_avg REAL, p_l2_avg REAL, p_l3_avg REAL,
-    v_l1_avg REAL, v_l2_avg REAL, v_l3_avg REAL, v_min REAL, v_max REAL,
-    e_imp_t1 REAL, e_imp_t2 REAL, e_exp_t1 REAL, e_exp_t2 REAL, gas REAL,
-    d_imp_t1 REAL, d_imp_t2 REAL, d_exp_t1 REAL, d_exp_t2 REAL, d_gas REAL
-)
-"""
-
-SCHEMA = f"""
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS samples (
-    ts INTEGER PRIMARY KEY,
-    p_imp REAL NOT NULL, p_exp REAL NOT NULL,
-    p_l1 REAL, p_l2 REAL, p_l3 REAL,
-    v_l1 REAL, v_l2 REAL, v_l3 REAL,
-    i_l1 REAL, i_l2 REAL, i_l3 REAL,
-    e_imp_t1 REAL, e_imp_t2 REAL, e_exp_t1 REAL, e_exp_t2 REAL, gas REAL
-);
-{_AGG_TABLE_SQL.format(name="agg_1m")};
-{_AGG_TABLE_SQL.format(name="agg_1h")};
-{_AGG_TABLE_SQL.format(name="agg_1d")};
-"""
-
-# Aggregate expressions used when rolling raw samples up into minutes.
-_SAMPLE_AGG_SQL = """
-    count(*), avg(p_imp), max(p_imp), avg(p_exp), max(p_exp),
-    avg(p_l1), avg(p_l2), avg(p_l3), avg(v_l1), avg(v_l2), avg(v_l3),
-    min(min(coalesce(v_l1, 1e9), coalesce(v_l2, 1e9), coalesce(v_l3, 1e9))),
-    max(max(coalesce(v_l1, 0), coalesce(v_l2, 0), coalesce(v_l3, 0)))
-"""
+SAMPLE_COLUMNS: dict[str, str] = {
+    "p_imp": "REAL NOT NULL",
+    "p_exp": "REAL NOT NULL",
+    **{f"{q}_l{ph}": "REAL" for q in ("p", "v", "i") for ph in PHASES},
+    **dict.fromkeys(COUNTERS, "REAL"),
+    **dict.fromkeys(EVENT_COUNTERS, "INTEGER"),
+}
 
 
 def _weighted(col: str) -> str:
     return f"sum({col} * n) / sum(CASE WHEN {col} IS NOT NULL THEN n END)"
 
 
-# Aggregate expressions used when rolling rollups up into larger rollups.
-_ROLLUP_AGG_SQL = f"""
-    sum(n), {_weighted("p_imp_avg")}, max(p_imp_max), {_weighted("p_exp_avg")}, max(p_exp_max),
-    {_weighted("p_l1_avg")}, {_weighted("p_l2_avg")}, {_weighted("p_l3_avg")},
-    {_weighted("v_l1_avg")}, {_weighted("v_l2_avg")}, {_weighted("v_l3_avg")},
-    min(v_min), max(v_max),
-    sum(d_imp_t1), sum(d_imp_t2), sum(d_exp_t1), sum(d_exp_t2), sum(d_gas)
-"""
+def _stat(col: str, fn: str, source: str) -> tuple[str, str, str]:
+    """A rollup statistic: (column, expression over samples, expression over rollups)."""
+    if fn == "avg":
+        return col, f"avg({source})", _weighted(col)
+    return col, f"{fn}({source})", f"{fn}({col})"
+
+
+STATS: tuple[tuple[str, str, str], ...] = (
+    _stat("p_imp_avg", "avg", "p_imp"),
+    _stat("p_imp_max", "max", "p_imp"),
+    _stat("p_exp_avg", "avg", "p_exp"),
+    _stat("p_exp_max", "max", "p_exp"),
+    *(
+        _stat(f"{q}_l{ph}_{fn}", fn, f"{q}_l{ph}")
+        for ph in PHASES
+        for q, fns in (
+            ("p", ("avg", "min", "max")),
+            ("v", ("avg", "min", "max")),
+            ("i", ("avg", "max")),
+        )
+        for fn in fns
+    ),
+    # Lowest and highest voltage across all phases.
+    (
+        "v_min",
+        "min(min(coalesce(v_l1, 1e9), coalesce(v_l2, 1e9), coalesce(v_l3, 1e9)))",
+        "min(v_min)",
+    ),
+    ("v_max", "max(max(coalesce(v_l1, 0), coalesce(v_l2, 0), coalesce(v_l3, 0)))", "max(v_max)"),
+)
+STAT_COLUMNS = tuple(s[0] for s in STATS)
+
+AGG_COLUMNS: dict[str, str] = {
+    "n": "INTEGER NOT NULL DEFAULT 0",
+    **dict.fromkeys(STAT_COLUMNS, "REAL"),
+    **dict.fromkeys(COUNTERS, "REAL"),
+    **dict.fromkeys(DELTAS, "REAL"),
+    **dict.fromkeys(EVENT_COUNTERS, "INTEGER"),
+}
+
+AGG_TABLES = ("agg_1m", "agg_1h", "agg_1d")
+
+
+def _create_table(name: str, columns: dict[str, str]) -> str:
+    cols = ",\n    ".join(f"{c} {t}" for c, t in columns.items())
+    return f"CREATE TABLE IF NOT EXISTS {name} (\n    ts INTEGER PRIMARY KEY,\n    {cols}\n)"
 
 
 def _delta(end: float | None, start: float | None) -> float | None:
@@ -100,6 +112,17 @@ def _delta(end: float | None, start: float | None) -> float | None:
         # No previous value, or the meter was replaced/reset.
         return 0.0
     return end - start
+
+
+def _clean_voltage(column: str, value: float | None) -> float | None:
+    # The cross-phase min/max use sentinels for missing phases.
+    if value is None:
+        return None
+    if column == "v_min" and value >= 1e9:
+        return None
+    if column == "v_max" and value <= 0:
+        return None
+    return value
 
 
 class Storage:
@@ -119,15 +142,43 @@ class Storage:
             """
         )
         with self._lock:
-            self._db.executescript(SCHEMA)
-            self._db.execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
-                (str(SCHEMA_VERSION),),
-            )
+            self._migrate()
 
     def close(self) -> None:
         with self._lock:
             self._db.close()
+
+    # ------------------------------------------------------------------ schema
+
+    def _migrate(self) -> None:
+        db = self._db
+        db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        version = int(row[0]) if row else 0
+
+        tables = {"samples": SAMPLE_COLUMNS, **dict.fromkeys(AGG_TABLES, AGG_COLUMNS)}
+        for name, columns in tables.items():
+            db.execute(_create_table(name, columns))
+            existing = {r[1] for r in db.execute(f"PRAGMA table_info({name})")}
+            for column, ctype in columns.items():
+                if column not in existing:
+                    # SQLite can't add NOT NULL columns without a default.
+                    db.execute(
+                        f"ALTER TABLE {name} ADD COLUMN {column} {ctype.replace(' NOT NULL', '')}"
+                    )
+
+        if 0 < version < 2:
+            # Version 2 added per-phase statistics. Rebuild rollups wherever raw samples
+            # still exist; the next rollup fills them in again.
+            first = db.execute("SELECT min(ts) FROM samples").fetchone()[0]
+            if first is not None:
+                log.info("Migrating rollups to schema 2 from %s", first)
+                db.execute("DELETE FROM agg_1m WHERE ts >= ?", (first // 60 * 60,))
+
+        db.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
+            (str(SCHEMA_VERSION),),
+        )
 
     # ------------------------------------------------------------------ settings
 
@@ -181,15 +232,17 @@ class Storage:
                 r.energy_export_t1,
                 r.energy_export_t2,
                 r.gas,
+                r.power_failures,
+                r.long_power_failures,
             )  # fmt: skip
             for r in readings
         ]
-        placeholders = ", ".join("?" * len(SAMPLE_COLUMNS))
+        columns = ("ts", *SAMPLE_COLUMNS)
         with self._lock:
             self._db.execute("BEGIN")
             self._db.executemany(
-                f"INSERT OR REPLACE INTO samples ({', '.join(SAMPLE_COLUMNS)}) "
-                f"VALUES ({placeholders})",
+                f"INSERT OR REPLACE INTO samples ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' * len(columns))})",
                 rows,
             )
             self._db.execute("COMMIT")
@@ -230,57 +283,52 @@ class Storage:
 
     def _rollup_minutes(self, start: int, end: int) -> int:
         db = self._db
+        stats_sql = ", ".join(f"{expr} AS {col}" for col, expr, _ in STATS)
         aggregates = db.execute(
-            f"SELECT ts / 60 * 60 AS m, {_SAMPLE_AGG_SQL} FROM samples "
+            f"SELECT ts / 60 * 60 AS m, count(*) AS n, {stats_sql} FROM samples "
             "WHERE ts >= ? AND ts < ? GROUP BY m ORDER BY m",
             (start, end),
         ).fetchall()
         if not aggregates:
             return 0
 
-        counters = ", ".join(COUNTERS)
-        last_rows = {
-            row[0] // 60 * 60: row[1:]
-            for row in db.execute(
-                f"SELECT ts, {counters} FROM samples WHERE ts IN ("
-                "SELECT max(ts) FROM samples WHERE ts >= ? AND ts < ? GROUP BY ts / 60)",
-                (start, end),
-            )
-        }
-        first_rows = {
-            row[0] // 60 * 60: row[1:]
-            for row in db.execute(
-                f"SELECT ts, {counters} FROM samples WHERE ts IN ("
-                "SELECT min(ts) FROM samples WHERE ts >= ? AND ts < ? GROUP BY ts / 60)",
-                (start, end),
-            )
-        }
-        prev_row = db.execute(
-            f"SELECT {counters} FROM agg_1m WHERE ts < ? ORDER BY ts DESC LIMIT 1", (start,)
-        ).fetchone()
-        prev = tuple(prev_row) if prev_row else None
+        last_cols = ", ".join(LAST_VALUES)
 
+        def edge_rows(fn: str) -> dict[int, sqlite3.Row]:
+            return {
+                row["ts"] // 60 * 60: row
+                for row in db.execute(
+                    f"SELECT ts, {last_cols} FROM samples WHERE ts IN ("
+                    f"SELECT {fn}(ts) FROM samples WHERE ts >= ? AND ts < ? GROUP BY ts / 60)",
+                    (start, end),
+                )
+            }
+
+        last_rows, first_rows = edge_rows("max"), edge_rows("min")
+        prev_row = db.execute(
+            f"SELECT {', '.join(COUNTERS)} FROM agg_1m WHERE ts < ? ORDER BY ts DESC LIMIT 1",
+            (start,),
+        ).fetchone()
+        prev: dict[str, float | None] = dict(prev_row) if prev_row else dict.fromkeys(COUNTERS)
+
+        columns = ("ts", "n", *STAT_COLUMNS, *LAST_VALUES, *DELTAS)
         rows = []
         for agg in aggregates:
-            minute = agg[0]
-            v_min = agg[12] if agg[12] < 1e9 else None
-            v_max = agg[13] if agg[13] > 0 else None
-            end_counters = last_rows[minute]
-            start_counters = [
-                p if p is not None else f
-                for p, f in zip(prev or (None,) * len(COUNTERS), first_rows[minute], strict=True)
-            ]
-            deltas = [_delta(e, s) for e, s in zip(end_counters, start_counters, strict=True)]
-            rows.append((*agg[:12], v_min, v_max, *end_counters, *deltas))
-            # Carry counters forward, keeping the previous value where this minute has none.
-            prev = tuple(
-                e if e is not None else p
-                for e, p in zip(end_counters, prev or (None,) * len(COUNTERS), strict=True)
-            )
+            minute = agg["m"]
+            last, first = last_rows[minute], first_rows[minute]
+            deltas = []
+            for counter in COUNTERS:
+                begin = prev[counter] if prev[counter] is not None else first[counter]
+                deltas.append(_delta(last[counter], begin))
+                # Carry counters forward, keeping the previous value where this minute has none.
+                if last[counter] is not None:
+                    prev[counter] = last[counter]
+            stats = [_clean_voltage(c, agg[c]) for c in STAT_COLUMNS]
+            rows.append((minute, agg["n"], *stats, *(last[c] for c in LAST_VALUES), *deltas))
 
-        placeholders = ", ".join("?" * len(AGG_COLUMNS))
         db.executemany(
-            f"INSERT OR REPLACE INTO agg_1m ({', '.join(AGG_COLUMNS)}) VALUES ({placeholders})",
+            f"INSERT OR REPLACE INTO agg_1m ({', '.join(columns)}) "
+            f"VALUES ({', '.join('?' * len(columns))})",
             rows,
         )
         return len(rows)
@@ -299,24 +347,27 @@ class Storage:
 
     def _write_buckets(self, src: str, dst: str, buckets: Iterable[tuple[int, int]]) -> None:
         db = self._db
-        counters = ", ".join(COUNTERS)
-        insert_cols = ", ".join(c for c in AGG_COLUMNS if c not in COUNTERS)
+        stats_sql = ", ".join(f"{expr} AS {col}" for col, _, expr in STATS)
+        deltas_sql = ", ".join(f"sum({d}) AS {d}" for d in DELTAS)
+        columns = ("ts", "n", *STAT_COLUMNS, *DELTAS, *LAST_VALUES)
+        insert = (
+            f"INSERT OR REPLACE INTO {dst} ({', '.join(columns)}) "
+            f"VALUES ({', '.join('?' * len(columns))})"
+        )
         for bucket_start, bucket_end in buckets:
             agg = db.execute(
-                f"SELECT {_ROLLUP_AGG_SQL} FROM {src} WHERE ts >= ? AND ts < ?",
+                f"SELECT sum(n) AS n, {stats_sql}, {deltas_sql} FROM {src} "
+                "WHERE ts >= ? AND ts < ?",
                 (bucket_start, bucket_end),
             ).fetchone()
-            if not agg[0]:
+            if not agg["n"]:
                 continue
             last = db.execute(
-                f"SELECT {counters} FROM {src} WHERE ts >= ? AND ts < ? ORDER BY ts DESC LIMIT 1",
+                f"SELECT {', '.join(LAST_VALUES)} FROM {src} WHERE ts >= ? AND ts < ? "
+                "ORDER BY ts DESC LIMIT 1",
                 (bucket_start, bucket_end),
             ).fetchone()
-            db.execute(
-                f"INSERT OR REPLACE INTO {dst} ({insert_cols}, {counters}) "
-                f"VALUES ({', '.join('?' * (len(AGG_COLUMNS)))})",
-                (bucket_start, *agg, *last),
-            )
+            db.execute(insert, (bucket_start, *agg, *last))
 
     def apply_retention(self, now: float, raw_days: int, minute_days: int) -> None:
         with self._lock:

@@ -209,6 +209,17 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             raise HTTPException(400, "date must be YYYY-MM-DD") from exc
         return await asyncio.to_thread(queries.history, storage, period, anchor, tariffs)
 
+    @app.get("/api/phases")
+    async def phases(
+        period: queries.Period = "day",
+        date_: str | None = Query(None, alias="date"),
+    ) -> dict:
+        try:
+            anchor = date.fromisoformat(date_) if date_ else datetime.now(storage.tz).date()
+        except ValueError as exc:
+            raise HTTPException(400, "date must be YYYY-MM-DD") from exc
+        return await asyncio.to_thread(queries.phase_history, storage, period, anchor)
+
     @app.get("/api/devices")
     async def devices() -> list[dict]:
         return [p1_status()]
