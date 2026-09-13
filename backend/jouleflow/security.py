@@ -118,9 +118,12 @@ class Auth:
         return (self.storage.get_setting("account") or {}).get("username")
 
     def _create_setup_code(self) -> None:
-        self.setup_code = "-".join(secrets.token_hex(2).upper() for _ in range(3))
         path = self.data_dir / "setup-code"
-        path.write_text(self.setup_code + "\n")
+        # Keep the same code across restarts until the account has been created.
+        existing = path.read_text().strip() if path.exists() else ""
+        self.setup_code = existing or "-".join(secrets.token_hex(2).upper() for _ in range(3))
+        if not existing:
+            path.write_text(self.setup_code + "\n")
         restrict_permissions(path)
         log.warning(
             "No Jouleflow account yet. Open the web app and use setup code %s "
