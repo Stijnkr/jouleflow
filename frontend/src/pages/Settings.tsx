@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, CircleAlert, Download, Gauge, Lock, LockOpen, LogOut, Plug as PlugIcon, Receipt } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Download, Gauge, Lock, LockOpen, LogOut, Plug as PlugIcon, Receipt, Sun } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { Button, Card, CardHeader, PageHeader, Row, Segmented, StatusDot, TextField } from "../components/ui";
@@ -19,6 +19,8 @@ export function SettingsPage() {
   const contract = tariffs?.contracts.at(-1);
   const { data: plugData } = useQuery({ queryKey: ["plugs"], queryFn: api.plugs, refetchInterval: 15_000 });
   const plugs = plugData?.plugs ?? [];
+  const { data: solarData } = useQuery({ queryKey: ["inverters"], queryFn: api.inverters, refetchInterval: 15_000 });
+  const inverters = solarData?.inverters ?? [];
 
   return (
     <>
@@ -44,6 +46,23 @@ export function SettingsPage() {
                   {device.connected ? t("common.connected") : t("common.offline")}
                 </span>
               )}
+              <ChevronRight className="size-4 text-subtle" />
+            </Link>
+            <Link
+              to="/settings/solar"
+              className="-mx-3 flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted-surface"
+            >
+              <Sun className="size-5 text-import" strokeWidth={1.75} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{t("solar.title")}</div>
+                <div className="truncate text-[13px] text-muted">
+                  {inverters.length
+                    ? `${inverters.map((i) => i.display_name).join(", ")} · ${t("solar.count", {
+                        count: inverters.filter((i) => i.connected).length,
+                      })}`
+                    : t("solar.settingsDescription")}
+                </div>
+              </div>
               <ChevronRight className="size-4 text-subtle" />
             </Link>
             <Link

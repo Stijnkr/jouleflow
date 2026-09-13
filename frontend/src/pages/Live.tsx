@@ -322,21 +322,64 @@ function MeasurementsCard({ range }: { range: PowerRange }) {
 
 // ---------------------------------------------------------------------------- energy flow
 
-function FlowNode({ label, value }: { label: string; value: string }) {
+function FlowNode({ label, value, compact }: { label: string; value: string; compact?: boolean }) {
   return (
-    <div className="w-28 shrink-0 rounded-lg border border-border px-4 py-3 sm:w-36 sm:px-5 sm:py-4">
-      <div className="text-sm text-muted">{label}</div>
-      <div className="tabular mt-1 text-lg font-semibold sm:text-xl">{value}</div>
+    <div
+      className={cn(
+        "shrink-0 rounded-lg border border-border py-3 sm:w-36 sm:px-5 sm:py-4",
+        compact ? "w-[5.5rem] px-3" : "w-28 px-4",
+      )}
+    >
+      <div className="truncate text-sm text-muted">{label}</div>
+      <div className={cn("tabular mt-1 font-semibold sm:text-xl", compact ? "text-base" : "text-lg")}>
+        {value}
+      </div>
     </div>
   );
 }
 
+/** Animated dashed line; energy moves towards the right end when `toRight`. */
+function FlowLine({ active, color, toRight }: { active: boolean; color: string; toRight: boolean }) {
+  return (
+    <svg className="h-6 min-w-0 flex-1" preserveAspectRatio="none" viewBox="0 0 100 24">
+      <line
+        x1="2"
+        y1="12"
+        x2="94"
+        y2="12"
+        stroke={active ? color : "var(--border)"}
+        strokeWidth="2"
+        strokeDasharray="8 6"
+        vectorEffect="non-scaling-stroke"
+        className={cn(active && "flow-line", !toRight && "reverse")}
+      />
+      {active && (
+        <path
+          d={toRight ? "M94 6 L100 12 L94 18" : "M6 6 L0 12 L6 18"}
+          fill="none"
+          stroke={color}
+          strokeWidth="2"
+          vectorEffect="non-scaling-stroke"
+          strokeLinecap="round"
+        />
+      )}
+    </svg>
+  );
+}
+
 function EnergyFlowCard({ reading }: { reading: Reading | null }) {
+  const { data: solarData } = useQuery({ queryKey: ["inverters"], queryFn: api.inverters, refetchInterval: 5000 });
+  const inverters = solarData?.inverters ?? [];
+  const hasSolar = inverters.length > 0;
+  const solarW = inverters.reduce((sum, i) => sum + (i.fresh ? (i.power ?? 0) : 0), 0);
+
   const net = reading?.power_net ?? 0;
   const exporting = net < 0;
   const idle = reading == null || Math.abs(net) < 5;
   const color = exporting ? "var(--export)" : "var(--import)";
-  const value = reading ? `${kw(Math.abs(net))} kW` : "—";
+  const gridValue = reading ? `${kw(Math.abs(net))} kW` : "—";
+  // What the house uses: whatever comes from the grid plus what the panels produce.
+  const homeValue = reading ? `${kw(Math.max(net + solarW, 0))} kW` : "—";
 
   return (
     <Card>
@@ -347,36 +390,24 @@ function EnergyFlowCard({ reading }: { reading: Reading | null }) {
         }
       />
       <div className="px-5 pt-6 pb-5 sm:px-6 sm:pb-6">
-        <div className="flex items-center gap-3 sm:gap-5">
-          <FlowNode label={t("flow.grid")} value={value} />
-          <svg className="h-6 min-w-0 flex-1" preserveAspectRatio="none" viewBox="0 0 100 24">
-            <line
-              x1="2"
-              y1="12"
-              x2="94"
-              y2="12"
-              stroke={idle ? "var(--border)" : color}
-              strokeWidth="2"
-              strokeDasharray="8 6"
-              vectorEffect="non-scaling-stroke"
-              className={cn(!idle && "flow-line", exporting && "reverse")}
-            />
-            {!idle && (
-              <path
-                d={exporting ? "M6 6 L0 12 L6 18" : "M94 6 L100 12 L94 18"}
-                fill="none"
-                stroke={color}
-                strokeWidth="2"
-                vectorEffect="non-scaling-stroke"
-                strokeLinecap="round"
-              />
-            )}
-          </svg>
-          <FlowNode label={t("flow.home")} value={value} />
-        </div>
+        {hasSolar ? (
+          <div className="flex items-center gap-2 sm:gap-4">
+            <FlowNode compact label={t("flow.solar")} value={`${kw(solarW)} kW`} />
+            <FlowLine active={solarW >= 5} color="var(--export)" toRight />
+            <FlowNode compact label={t("flow.home")} value={homeValue} />
+            <FlowLine active={!idle} color={color} toRight={exporting} />
+            <FlowNode compact label={t("flow.grid")} value={gridValue} />
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 sm:gap-5">
+            <FlowNode label={t("flow.grid")} value={gridValue} />
+            <FlowLine active={!idle} color={color} toRight={!exporting} />
+            <FlowNode label={t("flow.home")} value={homeValue} />
+          </div>
+        )}
         <PlugConsumers />
         <div className="mt-6 flex flex-wrap items-center gap-2 text-sm text-muted">
-          {[t("flow.solar"), t("flow.battery"), t("flow.ev")].map((d) => (
+          {[...(hasSolar ? [] : [t("flow.solar")]), t("flow.battery"), t("flow.ev")].map((d) => (
             <span key={d} className="rounded-full border border-dashed border-border px-3 py-1.5">
               {d}
             </span>

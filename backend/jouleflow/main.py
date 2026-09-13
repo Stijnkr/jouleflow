@@ -32,6 +32,9 @@ from .drivers import (
 from .plugs import CredentialsRequired, PlugManager, PlugSettingsUpdate, _error_code
 from .plugs import probe as probe_plug
 from .security import SESSION_COOKIE, SESSION_DAYS, Auth, SecretBox
+from .solar import InverterConfig, SolarManager, SolarSettings
+from .solar import _error_code as solar_error_code
+from .solar import probe as probe_inverter
 from .storage import Storage
 from .tariffs import TariffSettings
 
@@ -106,6 +109,12 @@ class PlugPower(BaseModel):
     on: bool
 
 
+class InverterTest(BaseModel):
+    host: str
+    port: int = Field(502, ge=1, le=65535)
+    unit_id: int = Field(1, ge=1, le=247)
+
+
 def initial_p1_config(storage: Storage, cfg: Settings) -> P1Config | None:
     """Saved settings win; otherwise fall back to JOULEFLOW_P1_URL for first-time setups."""
     saved = storage.get_setting("p1")
@@ -138,10 +147,15 @@ def create_app(cfg: Settings = settings) -> FastAPI:
 
     auth = Auth(storage, cfg.data_dir)
     plugs = PlugManager(storage, cfg.raw_retention_days, SecretBox(cfg.data_dir / "secret.key"))
+    solar = SolarManager(storage, cfg.raw_retention_days)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        tasks = [asyncio.create_task(collector.run()), asyncio.create_task(plugs.run())]
+        tasks = [
+            asyncio.create_task(collector.run()),
+            asyncio.create_task(plugs.run()),
+            asyncio.create_task(solar.run()),
+        ]
         try:
             yield
         finally:
@@ -151,6 +165,7 @@ def create_app(cfg: Settings = settings) -> FastAPI:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
             await plugs.close()
+            await solar.close()
             storage.close()
 
     app = FastAPI(title="Jouleflow", version=__version__, lifespan=lifespan)
@@ -441,6 +456,71 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             ]
         }
 
+    @app.get("/api/solar")
+    async def list_inverters() -> dict:
+        now = int(time.time())
+        day_start = storage.local_midnight(now)
+        energy = await asyncio.to_thread(solar.energy_between, day_start, now)
+        return {
+            "inverters": [
+                {**state, "energy_today_kwh": round(energy.get(state["id"], 0.0), 3)}
+                for state in solar.public_states()
+            ]
+        }
+
+    @app.get("/api/solar/settings")
+    async def solar_settings() -> SolarSettings:
+        return solar.settings
+
+    @app.put("/api/solar/settings")
+    async def save_solar_settings(update: SolarSettings) -> SolarSettings:
+        inverters = [
+            InverterConfig(
+                **{**inv.model_dump(), "host": inv.host.strip(), "name": inv.name.strip()}
+            )
+            for inv in update.inverters
+            if inv.host.strip()
+        ]
+        await solar.update_settings(SolarSettings(inverters=inverters))
+        return solar.settings
+
+    @app.post("/api/solar/test")
+    async def test_inverter(body: InverterTest) -> dict:
+        try:
+            found = await asyncio.wait_for(
+                probe_inverter(body.host.strip(), body.port, body.unit_id), 15
+            )
+        except Exception as exc:  # noqa: BLE001 - report any failure to the user
+            return {
+                "ok": False,
+                "code": solar_error_code(exc),
+                "error": str(exc) or exc.__class__.__name__,
+            }
+        return {"ok": True, **found}
+
+    @app.get("/api/solar/history")
+    async def solar_history(
+        period: queries.Period = "day",
+        date_: str | None = Query(None, alias="date"),
+    ) -> dict:
+        try:
+            anchor = date.fromisoformat(date_) if date_ else datetime.now(storage.tz).date()
+        except ValueError as exc:
+            raise HTTPException(400, "date must be YYYY-MM-DD") from exc
+        start, end = queries.period_bounds(storage, period, anchor)
+        end = min(end, int(time.time()))
+        energy = await asyncio.to_thread(solar.energy_between, start, end) if end > start else {}
+        return {
+            "inverters": [
+                {
+                    "id": state.id,
+                    "name": state.display_name,
+                    "energy_kwh": round(energy.get(state.id, 0.0), 3),
+                }
+                for state in solar.states.values()
+            ]
+        }
+
     @app.get("/api/tls")
     async def tls_info(request: Request) -> dict:
         info = await asyncio.to_thread(tls.describe, cfg.tls_dir)
@@ -560,6 +640,8 @@ def run() -> None:
     )
     # python-kasa logs every failed query at ERROR; our plug manager reports failures itself.
     logging.getLogger("kasa").setLevel(logging.CRITICAL)
+    # pymodbus logs every timeout; inverters sleep at night, the solar manager reports itself.
+    logging.getLogger("pymodbus").setLevel(logging.CRITICAL)
 
     app = create_app()
     if not settings.https:

@@ -3,7 +3,7 @@ import { BatteryCharging, Car, Gauge, Heater, Plug as PlugIcon, Settings2, Sun }
 import { Link } from "react-router";
 import { PlugSwitch } from "../components/PlugSwitch";
 import { Card, CardHeader, PageHeader, Row, StatusDot } from "../components/ui";
-import { api } from "../lib/api";
+import { api, type Inverter } from "../lib/api";
 import { duration, energy, num, number, powerText, time } from "../lib/format";
 import { t, tDynamic } from "../lib/i18n";
 
@@ -18,6 +18,8 @@ export function DevicesPage() {
   const { data } = useQuery({ queryKey: ["devices"], queryFn: api.devices, refetchInterval: 5000 });
   const { data: plugData } = useQuery({ queryKey: ["plugs"], queryFn: api.plugs, refetchInterval: 5000 });
   const plugs = plugData?.plugs ?? [];
+  const { data: solarData } = useQuery({ queryKey: ["inverters"], queryFn: api.inverters, refetchInterval: 5000 });
+  const inverters = solarData?.inverters ?? [];
 
   return (
     <>
@@ -72,6 +74,22 @@ export function DevicesPage() {
           );
         })}
 
+        {inverters.map((inverter) => (
+          <InverterCard key={inverter.id} inverter={inverter} />
+        ))}
+
+        {inverters.length === 0 && (
+          <Link to="/settings/solar">
+            <Card className="flex items-center gap-3 p-5 transition-colors hover:bg-muted-surface/50 sm:p-6">
+              <Sun className="size-5 text-export" strokeWidth={1.75} />
+              <div>
+                <div className="text-sm font-medium">{t("solar.setup")}</div>
+                <div className="text-[13px] text-muted">{t("solar.settingsDescription")}</div>
+              </div>
+            </Card>
+          </Link>
+        )}
+
         {plugs.map((plug) => (
           <Card key={plug.id}>
             <CardHeader
@@ -125,8 +143,8 @@ export function DevicesPage() {
 
         <Card>
           <CardHeader title={t("common.comingSoon")} description={t("devices.comingSoonDescription")} />
-          <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-4 sm:p-6">
-            {upcoming.map(({ name, icon: Icon }) => (
+          <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-3 sm:p-6">
+            {upcoming.filter((u) => u.name !== "devices.solar").map(({ name, icon: Icon }) => (
               <div
                 key={name}
                 className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border p-4 text-sm text-muted"
@@ -160,5 +178,75 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="text-sm text-muted">{label}</div>
       <div className="tabular mt-1 truncate text-xl font-semibold tracking-tight">{value}</div>
     </div>
+  );
+}
+
+function InverterCard({ inverter }: { inverter: Inverter }) {
+  const producing = inverter.fresh && (inverter.power ?? 0) > 0;
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className="flex items-center gap-2.5">
+            <Sun className="size-[18px] text-export" strokeWidth={1.75} />
+            {inverter.display_name}
+          </span>
+        }
+        description={[t("solar.modelGrowatt"), `${inverter.host}:${inverter.port}`].join(" · ")}
+        action={
+          <div className="flex items-center gap-2">
+            <span className="hidden items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm sm:flex">
+              <StatusDot ok={inverter.fresh} />
+              {inverter.fresh
+                ? tDynamic(`solar.status.${inverter.status}`, inverter.status ?? "")
+                : inverter.error_code === "no_response"
+                  ? t("solar.asleep")
+                  : t("common.offline")}
+            </span>
+            <Link
+              to="/settings/solar"
+              aria-label={t("solar.title")}
+              className="grid size-9 place-items-center rounded-lg border border-border text-muted hover:bg-muted-surface hover:text-foreground"
+            >
+              <Settings2 className="size-4" />
+            </Link>
+          </div>
+        }
+      />
+      <div className="grid grid-cols-2 gap-x-6 gap-y-4 px-5 pt-5 pb-5 sm:grid-cols-4 sm:px-6">
+        <Stat label={t("live.power")} value={powerText(inverter.fresh ? inverter.power : 0)} />
+        <Stat
+          label={t("solar.today")}
+          value={`${energy(Math.max(inverter.today_kwh ?? 0, inverter.energy_today_kwh))} kWh`}
+        />
+        <Stat label={t("solar.total")} value={inverter.total_kwh != null ? `${energy(inverter.total_kwh, 1)} kWh` : "—"} />
+        <Stat
+          label={t("solar.temperature")}
+          value={inverter.temperature != null && producing ? `${num(inverter.temperature, 1)} °C` : "—"}
+        />
+      </div>
+      <div className="divide-y divide-border border-t border-border px-5 pt-1 pb-2 sm:px-6">
+        <Row
+          label={t("solar.dc")}
+          value={
+            producing
+              ? `${powerText(inverter.pv_power)} · ${num(inverter.pv1_voltage ?? 0, 0)} V · ${num(inverter.pv1_current ?? 0, 1)} A`
+              : "—"
+          }
+        />
+        <Row
+          label={t("solar.grid")}
+          value={
+            producing
+              ? `${num(inverter.grid_voltage ?? 0, 0)} V · ${num(inverter.grid_current ?? 0, 1)} A · ${num(inverter.frequency ?? 0, 2)} Hz`
+              : "—"
+          }
+        />
+        <Row label={t("devices.lastReading")} value={inverter.last_update ? time(inverter.last_update, true) : "—"} />
+        {!inverter.fresh && inverter.error_code && (
+          <Row label={t("devices.lastError")} value={tDynamic(`solar.error.${inverter.error_code}`, inverter.error ?? "")} />
+        )}
+      </div>
+    </Card>
   );
 }

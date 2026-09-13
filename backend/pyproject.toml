@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.6",
     "cryptography>=42",
     "python-kasa>=0.10.2",
+    "pymodbus>=3.8",
 ]
 
 [project.scripts]

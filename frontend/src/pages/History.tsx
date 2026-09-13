@@ -210,6 +210,8 @@ export function HistoryPage() {
 
         {h?.totals.feed_in && <FeedInCard summary={h.totals.feed_in} />}
 
+        <SolarCard period={period} anchor={isoDate(anchor)} exported={h?.totals.export ?? null} />
+
         <PlugsCard period={period} anchor={isoDate(anchor)} />
 
         <MeasurementsCard period={period} anchor={isoDate(anchor)} />
@@ -409,6 +411,48 @@ function PlugsCard({ period, anchor }: { period: Period; anchor: string }) {
             </div>
           </div>
         ))}
+      </div>
+    </Card>
+  );
+}
+
+function SolarCard({ period, anchor, exported }: { period: Period; anchor: string; exported: number | null }) {
+  const { data } = useQuery({
+    queryKey: ["solar-history", period, anchor],
+    queryFn: () => api.solarHistory(period, anchor),
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  });
+  const inverters = data?.inverters ?? [];
+  if (!inverters.length) return null;
+  const produced = inverters.reduce((sum, i) => sum + i.energy_kwh, 0);
+  // Everything produced that did not go out to the grid was used in the house.
+  const used = exported == null ? null : Math.max(produced - exported, 0);
+
+  return (
+    <Card>
+      <CardHeader title={t("solar.title")} description={t("solar.historyDescription")} />
+      <div className="px-5 pt-5 pb-5 sm:px-6">
+        <Value value={energy(produced)} unit="kWh" />
+        {used != null && produced > 0 && (
+          <div className="tabular mt-3 text-sm text-muted">
+            {t("solar.selfUsed", {
+              used: energy(used),
+              pct: Math.round((used / produced) * 100),
+              exported: energy(Math.min(exported ?? 0, produced)),
+            })}
+          </div>
+        )}
+        {inverters.length > 1 && (
+          <div className="mt-4 flex flex-col divide-y divide-border border-t border-border">
+            {inverters.map((i) => (
+              <div key={i.id} className="flex items-baseline justify-between gap-3 py-2.5 text-sm">
+                <span className="truncate font-medium">{i.name}</span>
+                <span className="tabular font-semibold">{energy(i.energy_kwh)} kWh</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </Card>
   );

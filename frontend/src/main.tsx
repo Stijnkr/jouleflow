@@ -15,6 +15,7 @@ import { LivePage } from "./pages/Live";
 import { P1SettingsPage } from "./pages/P1Settings";
 import { PlugSettingsPage } from "./pages/PlugSettings";
 import { SettingsPage } from "./pages/Settings";
+import { SolarSettingsPage } from "./pages/SolarSettings";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: true, staleTime: 5_000 } },
@@ -31,6 +32,7 @@ const router = createBrowserRouter([
       { path: "/settings/p1", element: <P1SettingsPage /> },
       { path: "/settings/contract", element: <ContractSettingsPage /> },
       { path: "/settings/plugs", element: <PlugSettingsPage /> },
+      { path: "/settings/solar", element: <SolarSettingsPage /> },
     ],
   },
 ]);

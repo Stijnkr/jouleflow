@@ -73,7 +73,7 @@ De webapp is standaard Nederlandstalig en kan in de instellingen op Engels worde
 - [x] Nederlandstalige interface (met Engels als optie)
 - [ ] Dynamische (uur)tarieven
 - [ ] Drivers voor HomeWizard P1 en USB P1-kabel
-- [ ] Koppeling met omvormers van zonnepanelen
+- [x] Koppeling met omvormers van zonnepanelen (Growatt MIC/MIN via Modbus TCP)
 
 ### Fase 3: Je huis leren kennen
 - [ ] Verbruikspatronen en verbruiksvoorspelling

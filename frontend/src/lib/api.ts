@@ -139,6 +139,41 @@ export type PlugTestResult =
   | { ok: true; alias: string | null; model: string | null; is_on: boolean | null; power: number | null; has_energy: boolean }
   | { ok: false; code: string; error: string };
 
+export type Inverter = {
+  id: string;
+  name: string;
+  display_name: string;
+  model: string;
+  host: string;
+  port: number;
+  unit_id: number;
+  connected: boolean;
+  fresh: boolean;
+  last_update: number | null;
+  error: string | null;
+  error_code: "no_response" | "timeout" | "connect" | null;
+  status?: string;
+  power: number | null;
+  pv_power?: number;
+  pv1_voltage?: number;
+  pv1_current?: number;
+  pv2_voltage?: number;
+  pv2_current?: number;
+  grid_voltage?: number;
+  grid_current?: number;
+  frequency?: number;
+  today_kwh?: number;
+  total_kwh?: number;
+  temperature?: number;
+  energy_today_kwh: number;
+};
+
+export type InverterConfig = { id?: string; name: string; model: "growatt"; host: string; port: number; unit_id: number };
+
+export type InverterTestResult =
+  | { ok: true; status: string; power: number; today_kwh: number; total_kwh: number }
+  | { ok: false; code: string; error: string };
+
 export type TlsInfo = {
   enabled: boolean;
   secure: boolean;
@@ -306,6 +341,19 @@ export const api = {
   plugHistory: (period: Period, date: string) =>
     get<{ plugs: { id: string; name: string; energy_kwh: number }[] }>(
       `/api/plugs/history?period=${period}&date=${date}`,
+    ),
+  inverters: () => get<{ inverters: Inverter[] }>("/api/solar"),
+  solarSettings: () => get<{ inverters: Required<InverterConfig>[] }>("/api/solar/settings"),
+  saveSolarSettings: (inverters: InverterConfig[]) =>
+    request<{ inverters: Required<InverterConfig>[] }>("/api/solar/settings", {
+      method: "PUT",
+      body: JSON.stringify({ inverters }),
+    }),
+  testInverter: (body: { host: string; port: number; unit_id: number }) =>
+    request<InverterTestResult>("/api/solar/test", { method: "POST", body: JSON.stringify(body) }),
+  solarHistory: (period: Period, date: string) =>
+    get<{ inverters: { id: string; name: string; energy_kwh: number }[] }>(
+      `/api/solar/history?period=${period}&date=${date}`,
     ),
   p1Drivers: () => get<DriverInfo[]>("/api/p1/drivers"),
   p1Config: () => get<P1ConfigResponse>("/api/p1/config"),
