@@ -110,6 +110,35 @@ export type History = {
   first_data: number | null;
 };
 
+export type Plug = {
+  id: string;
+  host: string;
+  name: string;
+  display_name: string;
+  connected: boolean;
+  fresh: boolean;
+  last_update: number | null;
+  error: string | null;
+  error_code: "auth" | "timeout" | "connect" | null;
+  model: string | null;
+  alias: string | null;
+  is_on: boolean | null;
+  power: number | null;
+  voltage: number | null;
+  current: number | null;
+  today_kwh: number | null;
+  energy_today_kwh: number;
+  rssi: number | null;
+};
+
+export type PlugConfig = { id?: string; host: string; name: string };
+
+export type PlugSettings = { username: string; has_password: boolean; plugs: Required<PlugConfig>[] };
+
+export type PlugTestResult =
+  | { ok: true; alias: string | null; model: string | null; is_on: boolean | null; power: number | null; has_energy: boolean }
+  | { ok: false; code: string; error: string };
+
 export type SystemInfo = {
   version: string;
   model?: string;
@@ -232,6 +261,22 @@ export const api = {
   tariffs: () => get<TariffSettings>("/api/tariffs"),
   saveTariffs: (settings: TariffSettings) =>
     request<TariffSettings>("/api/tariffs", { method: "PUT", body: JSON.stringify(settings) }),
+  plugs: () => get<{ plugs: Plug[] }>("/api/plugs"),
+  plugSettings: () => get<PlugSettings>("/api/plugs/settings"),
+  savePlugSettings: (body: { username: string; password: string | null; plugs: PlugConfig[] }) =>
+    request<PlugSettings>("/api/plugs/settings", { method: "PUT", body: JSON.stringify(body) }),
+  testPlug: (body: { host: string; username?: string; password?: string }) =>
+    request<PlugTestResult>("/api/plugs/test", { method: "POST", body: JSON.stringify(body) }),
+  discoverPlugs: () =>
+    request<{ host: string; model: string | null; configured: boolean }[]>("/api/plugs/discover", {
+      method: "POST",
+    }),
+  setPlugPower: (id: string, on: boolean) =>
+    request<Plug>(`/api/plugs/${id}/power`, { method: "POST", body: JSON.stringify({ on }) }),
+  plugHistory: (period: Period, date: string) =>
+    get<{ plugs: { id: string; name: string; energy_kwh: number }[] }>(
+      `/api/plugs/history?period=${period}&date=${date}`,
+    ),
   p1Drivers: () => get<DriverInfo[]>("/api/p1/drivers"),
   p1Config: () => get<P1ConfigResponse>("/api/p1/config"),
   p1Test: (config: P1Config) =>

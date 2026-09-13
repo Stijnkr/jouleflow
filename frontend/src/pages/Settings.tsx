@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Gauge, Receipt } from "lucide-react";
+import { ChevronRight, Gauge, Plug as PlugIcon, Receipt } from "lucide-react";
 import { Link } from "react-router";
 import { Card, CardHeader, PageHeader, Row, Segmented, StatusDot } from "../components/ui";
 import { api } from "../lib/api";
@@ -15,6 +15,8 @@ export function SettingsPage() {
   const device = live?.device;
   const { data: tariffs } = useQuery({ queryKey: ["tariffs"], queryFn: api.tariffs });
   const contract = tariffs?.contracts.at(-1);
+  const { data: plugData } = useQuery({ queryKey: ["plugs"], queryFn: api.plugs, refetchInterval: 15_000 });
+  const plugs = plugData?.plugs ?? [];
 
   return (
     <>
@@ -40,6 +42,23 @@ export function SettingsPage() {
                   {device.connected ? t("common.connected") : t("common.offline")}
                 </span>
               )}
+              <ChevronRight className="size-4 text-subtle" />
+            </Link>
+            <Link
+              to="/settings/plugs"
+              className="-mx-3 flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted-surface"
+            >
+              <PlugIcon className="size-5 text-import" strokeWidth={1.75} />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{t("plugs.title")}</div>
+                <div className="truncate text-[13px] text-muted">
+                  {plugs.length
+                    ? `${plugs.map((p) => p.display_name).join(", ")} · ${t("plugs.count", {
+                        count: plugs.filter((p) => p.connected).length,
+                      })}`
+                    : t("plugs.settingsDescription")}
+                </div>
+              </div>
               <ChevronRight className="size-4 text-subtle" />
             </Link>
             <Link

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Moon, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { MetricChart } from "../components/MetricChart";
+import { PlugSwitch } from "../components/PlugSwitch";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
 import { api, type PowerRange, type Reading, type Series, type Summary } from "../lib/api";
 import { energy, euro, kw, longDate, num, power, powerText, time } from "../lib/format";
@@ -373,6 +374,7 @@ function EnergyFlowCard({ reading }: { reading: Reading | null }) {
           </svg>
           <FlowNode label={t("flow.home")} value={value} />
         </div>
+        <PlugConsumers />
         <div className="mt-6 flex flex-wrap items-center gap-2 text-sm text-muted">
           {[t("flow.solar"), t("flow.battery"), t("flow.ev")].map((d) => (
             <span key={d} className="rounded-full border border-dashed border-border px-3 py-1.5">
@@ -435,5 +437,30 @@ function PhasesCard({ reading }: { reading: Reading | null }) {
         })}
       </div>
     </Card>
+  );
+}
+
+function PlugConsumers() {
+  const { data } = useQuery({ queryKey: ["plugs"], queryFn: api.plugs, refetchInterval: 5000 });
+  const plugs = data?.plugs ?? [];
+  if (!plugs.length) return null;
+  return (
+    <div className="mt-6 border-t border-border pt-4">
+      <div className="mb-2 text-xs font-medium text-subtle">{t("plugs.consumers")}</div>
+      <div className="flex flex-col divide-y divide-border">
+        {plugs.map((plug) => (
+          <div key={plug.id} className="flex items-center gap-3 py-2.5 text-sm">
+            <span className={cn("size-2 shrink-0 rounded-full", plug.connected ? (plug.is_on ? "bg-export" : "bg-subtle") : "bg-import")} />
+            <span className="min-w-0 flex-1 truncate font-medium">{plug.display_name}</span>
+            <span className="tabular text-muted">
+              {plug.connected
+                ? `${powerText(plug.power)} · ${energy(plug.today_kwh ?? plug.energy_today_kwh)} kWh`
+                : t("plugs.offline")}
+            </span>
+            <PlugSwitch plug={plug} />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

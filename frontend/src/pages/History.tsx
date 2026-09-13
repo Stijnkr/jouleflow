@@ -210,6 +210,8 @@ export function HistoryPage() {
 
         {h?.totals.feed_in && <FeedInCard summary={h.totals.feed_in} />}
 
+        <PlugsCard period={period} anchor={isoDate(anchor)} />
+
         <MeasurementsCard period={period} anchor={isoDate(anchor)} />
 
       </div>
@@ -374,6 +376,40 @@ function FeedInCard({ summary }: { summary: FeedInSummary }) {
           })}
         </p>
       )}
+    </Card>
+  );
+}
+
+function PlugsCard({ period, anchor }: { period: Period; anchor: string }) {
+  const { data } = useQuery({
+    queryKey: ["plug-history", period, anchor],
+    queryFn: () => api.plugHistory(period, anchor),
+    placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
+  });
+  const plugs = data?.plugs ?? [];
+  if (!plugs.length) return null;
+  const max = Math.max(...plugs.map((p) => p.energy_kwh), 0.001);
+
+  return (
+    <Card>
+      <CardHeader title={t("plugs.title")} description={t("plugs.historyDescription")} />
+      <div className="flex flex-col gap-4 px-5 pt-5 pb-5 sm:px-6">
+        {plugs.map((plug) => (
+          <div key={plug.id}>
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="truncate font-medium">{plug.name}</span>
+              <span className="tabular font-semibold">{energy(plug.energy_kwh)} kWh</span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted-surface">
+              <div
+                className="h-full rounded-full bg-import transition-[width] duration-500"
+                style={{ width: `${(plug.energy_kwh / max) * 100}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }

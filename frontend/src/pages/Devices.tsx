@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { BatteryCharging, Car, Gauge, Heater, Settings2, Sun } from "lucide-react";
+import { BatteryCharging, Car, Gauge, Heater, Plug as PlugIcon, Settings2, Sun } from "lucide-react";
 import { Link } from "react-router";
+import { PlugSwitch } from "../components/PlugSwitch";
 import { Card, CardHeader, PageHeader, Row, StatusDot } from "../components/ui";
 import { api } from "../lib/api";
-import { duration, number, time } from "../lib/format";
-import { t } from "../lib/i18n";
+import { duration, energy, num, number, powerText, time } from "../lib/format";
+import { t, tDynamic } from "../lib/i18n";
 
 const upcoming = [
   { name: "devices.solar", icon: Sun },
@@ -15,6 +16,8 @@ const upcoming = [
 
 export function DevicesPage() {
   const { data } = useQuery({ queryKey: ["devices"], queryFn: api.devices, refetchInterval: 5000 });
+  const { data: plugData } = useQuery({ queryKey: ["plugs"], queryFn: api.plugs, refetchInterval: 5000 });
+  const plugs = plugData?.plugs ?? [];
 
   return (
     <>
@@ -69,6 +72,57 @@ export function DevicesPage() {
           );
         })}
 
+        {plugs.map((plug) => (
+          <Card key={plug.id}>
+            <CardHeader
+              title={
+                <span className="flex items-center gap-2.5">
+                  <PlugIcon className="size-[18px] text-import" strokeWidth={1.75} />
+                  {plug.display_name}
+                </span>
+              }
+              description={[plug.model ?? "Tapo", plug.host].join(" · ")}
+              action={
+                <div className="flex items-center gap-3">
+                  <PlugSwitch plug={plug} />
+                  <Link
+                    to="/settings/plugs"
+                    aria-label={t("plugs.title")}
+                    className="grid size-9 place-items-center rounded-lg border border-border text-muted hover:bg-muted-surface hover:text-foreground"
+                  >
+                    <Settings2 className="size-4" />
+                  </Link>
+                </div>
+              }
+            />
+            {plug.connected ? (
+              <div className="grid grid-cols-2 gap-x-6 gap-y-4 px-5 pt-5 pb-5 sm:grid-cols-4 sm:px-6">
+                <Stat label={t("live.power")} value={powerText(plug.power)} />
+                <Stat label={t("plugs.today")} value={`${energy(plug.today_kwh ?? plug.energy_today_kwh)} kWh`} />
+                <Stat label={t("phases.metricVoltage")} value={plug.voltage != null ? `${num(plug.voltage, 0)} V` : "—"} />
+                <Stat label={t("phases.metricCurrent")} value={plug.current != null ? `${num(plug.current, 2)} A` : "—"} />
+              </div>
+            ) : (
+              <p className="flex items-center gap-2 px-5 pt-4 pb-5 text-sm text-import sm:px-6">
+                <StatusDot ok={false} />
+                {plug.error_code ? tDynamic(`plugs.error.${plug.error_code}`, plug.error ?? "") : t("plugs.offline")}
+              </p>
+            )}
+          </Card>
+        ))}
+
+        {plugs.length === 0 && (
+          <Link to="/settings/plugs">
+            <Card className="flex items-center gap-3 p-5 transition-colors hover:bg-muted-surface/50 sm:p-6">
+              <PlugIcon className="size-5 text-import" strokeWidth={1.75} />
+              <div>
+                <div className="text-sm font-medium">{t("plugs.setup")}</div>
+                <div className="text-[13px] text-muted">{t("plugs.settingsDescription")}</div>
+              </div>
+            </Card>
+          </Link>
+        )}
+
         <Card>
           <CardHeader title={t("common.comingSoon")} description={t("devices.comingSoonDescription")} />
           <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-4 sm:p-6">
@@ -98,4 +152,13 @@ function signalQuality(dbm: number) {
   if (dbm >= -67) return t("signal.good");
   if (dbm >= -75) return t("signal.fair");
   return t("signal.weak");
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-sm text-muted">{label}</div>
+      <div className="tabular mt-1 truncate text-xl font-semibold tracking-tight">{value}</div>
+    </div>
+  );
 }

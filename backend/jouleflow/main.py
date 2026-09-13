@@ -28,6 +28,8 @@ from .drivers import (
     get_driver,
     list_drivers,
 )
+from .plugs import PlugManager, PlugSettingsUpdate
+from .plugs import probe as probe_plug
 from .storage import Storage
 from .tariffs import TariffSettings
 
@@ -108,15 +110,20 @@ def create_app(cfg: Settings = settings) -> FastAPI:
         minute_retention_days=cfg.minute_retention_days,
     )
 
+    plugs = PlugManager(storage, cfg.raw_retention_days)
+
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        task = asyncio.create_task(collector.run())
+        tasks = [asyncio.create_task(collector.run()), asyncio.create_task(plugs.run())]
         try:
             yield
         finally:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            await plugs.close()
             storage.close()
 
     app = FastAPI(title="Jouleflow", version=__version__, lifespan=lifespan)
@@ -219,6 +226,99 @@ def create_app(cfg: Settings = settings) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, "date must be YYYY-MM-DD") from exc
         return await asyncio.to_thread(queries.history_series, storage, period, anchor)
+
+    @app.get("/api/plugs")
+    async def list_plugs() -> dict:
+        now = int(time.time())
+        day_start = storage.local_midnight(now)
+        energy = await asyncio.to_thread(plugs.energy_between, day_start, now)
+        return {
+            "plugs": [
+                {**state, "energy_today_kwh": round(energy.get(state["id"], 0.0), 3)}
+                for state in plugs.public_states()
+            ]
+        }
+
+    @app.get("/api/plugs/settings")
+    async def plug_settings() -> dict:
+        return plugs.public_settings()
+
+    @app.put("/api/plugs/settings")
+    async def save_plug_settings(update: PlugSettingsUpdate) -> dict:
+        await plugs.update_settings(update)
+        return plugs.public_settings()
+
+    class PlugTest(BaseModel):
+        host: str
+        username: str | None = None
+        password: str | None = None
+
+    @app.post("/api/plugs/test")
+    async def test_plug(body: PlugTest) -> dict:
+        username = body.username if body.username is not None else plugs.settings.username
+        password = body.password if body.password is not None else plugs.settings.password
+        try:
+            found = await asyncio.wait_for(probe_plug(body.host.strip(), username, password), 20)
+        except Exception as exc:  # noqa: BLE001 - report any failure to the user
+            from .plugs import _error_code
+
+            return {
+                "ok": False,
+                "code": _error_code(exc),
+                "error": str(exc) or exc.__class__.__name__,
+            }
+        return {"ok": True, **found}
+
+    @app.post("/api/plugs/discover")
+    async def discover_plugs() -> list[dict]:
+        from kasa import Discover
+
+        found = await Discover.discover(discovery_timeout=4)
+        configured = {p.host for p in plugs.settings.plugs}
+        return [
+            {
+                "host": host,
+                "model": getattr(device, "model", None),
+                "configured": host in configured,
+            }
+            for host, device in found.items()
+        ]
+
+    class PlugPower(BaseModel):
+        on: bool
+
+    @app.post("/api/plugs/{plug_id}/power")
+    async def plug_power(plug_id: str, body: PlugPower) -> dict:
+        if plug_id not in plugs.states:
+            raise HTTPException(404, "Unknown plug")
+        try:
+            await plugs.set_power(plug_id, body.on)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, str(exc) or "Could not switch the plug") from exc
+        return next(s for s in plugs.public_states() if s["id"] == plug_id)
+
+    @app.get("/api/plugs/history")
+    async def plug_history(
+        period: queries.Period = "day",
+        date_: str | None = Query(None, alias="date"),
+    ) -> dict:
+        try:
+            anchor = date.fromisoformat(date_) if date_ else datetime.now(storage.tz).date()
+        except ValueError as exc:
+            raise HTTPException(400, "date must be YYYY-MM-DD") from exc
+        start, end = queries.period_bounds(storage, period, anchor)
+        end = min(end, int(time.time()))
+        energy = await asyncio.to_thread(plugs.energy_between, start, end) if end > start else {}
+        return {
+            "plugs": [
+                {
+                    "id": state.id,
+                    "name": state.display_name,
+                    "energy_kwh": round(energy.get(state.id, 0.0), 3),
+                }
+                for state in plugs.states.values()
+            ]
+        }
 
     @app.get("/api/devices")
     async def devices() -> list[dict]:
