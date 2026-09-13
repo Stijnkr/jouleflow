@@ -91,6 +91,9 @@ class PlugState:
     month_kwh: float | None = None
     rssi: int | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # Back off after failures so an unreachable plug doesn't flood the log.
+    failures: int = 0
+    next_attempt: float = 0.0
 
     @property
     def display_name(self) -> str:
@@ -201,6 +204,8 @@ class PlugManager:
         async with self._lock:
             await self._disconnect_all()
             self._sync_states()
+            for state in self.states.values():
+                state.failures, state.next_attempt = 0, 0.0
 
     def _sync_states(self) -> None:
         states = {}
@@ -248,6 +253,12 @@ class PlugManager:
         return device
 
     async def _poll(self, state: PlugState) -> None:
+        if not self.settings.username:
+            state.connected = False
+            state.error, state.error_code = "No TP-Link account configured", "auth"
+            return
+        if time.time() < state.next_attempt:
+            return
         try:
             device = await self._connect(state)
             await asyncio.wait_for(device.update(), 10)
@@ -255,10 +266,17 @@ class PlugManager:
             state.connected = True
             state.last_update = time.time()
             state.error = state.error_code = None
+            state.failures = 0
+            state.next_attempt = 0.0
         except Exception as exc:  # noqa: BLE001 - keep polling the other plugs
             state.connected = False
             state.error = str(exc) or exc.__class__.__name__
             state.error_code = _error_code(exc)
+            state.failures += 1
+            # 10 s, 20 s, 40 s ... up to 5 minutes between attempts.
+            state.next_attempt = time.time() + min(POLL_INTERVAL * 2 ** (state.failures - 1), 300)
+            if state.failures == 1 or state.failures % 10 == 0:
+                log.warning("Plug %s (%s): %s", state.display_name, state.host, state.error)
             device = self._devices.pop(state.id, None)
             if device is not None:
                 with contextlib.suppress(Exception):

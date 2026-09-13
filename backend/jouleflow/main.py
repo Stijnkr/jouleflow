@@ -504,6 +504,8 @@ def run() -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
+    # python-kasa logs every failed query at ERROR; our plug manager reports failures itself.
+    logging.getLogger("kasa").setLevel(logging.CRITICAL)
     uvicorn.run(create_app(), host=settings.host, port=settings.port, log_level="warning")
 
 
