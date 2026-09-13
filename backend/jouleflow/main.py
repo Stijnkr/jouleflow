@@ -194,9 +194,9 @@ def create_app(cfg: Settings = settings) -> FastAPI:
     async def summary() -> dict:
         return await asyncio.to_thread(queries.today_summary, storage, int(time.time()), tariffs)
 
-    @app.get("/api/power")
-    async def power(range: queries.Range = "hour") -> dict:  # noqa: A002
-        return await asyncio.to_thread(queries.power_series, storage, range, int(time.time()))
+    @app.get("/api/series")
+    async def live_series(range: queries.Range = "hour") -> dict:  # noqa: A002
+        return await asyncio.to_thread(queries.live_series, storage, range, int(time.time()))
 
     @app.get("/api/history")
     async def history(
@@ -209,8 +209,8 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             raise HTTPException(400, "date must be YYYY-MM-DD") from exc
         return await asyncio.to_thread(queries.history, storage, period, anchor, tariffs)
 
-    @app.get("/api/phases")
-    async def phases(
+    @app.get("/api/history/series")
+    async def history_series(
         period: queries.Period = "day",
         date_: str | None = Query(None, alias="date"),
     ) -> dict:
@@ -218,7 +218,7 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             anchor = date.fromisoformat(date_) if date_ else datetime.now(storage.tz).date()
         except ValueError as exc:
             raise HTTPException(400, "date must be YYYY-MM-DD") from exc
-        return await asyncio.to_thread(queries.phase_history, storage, period, anchor)
+        return await asyncio.to_thread(queries.history_series, storage, period, anchor)
 
     @app.get("/api/devices")
     async def devices() -> list[dict]:

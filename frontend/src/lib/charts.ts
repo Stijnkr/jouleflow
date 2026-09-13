@@ -1,7 +1,8 @@
 import type { ChartOption } from "../components/Chart";
-import type { Bar, PhaseHistory, PowerPoint } from "./api";
-import { axisPower, energy, euro, num, number, powerText, shortDate, time, weekday } from "./format";
-import { t } from "./i18n";
+import type { Bar, Series } from "./api";
+import { energy, euro, num, number, shortDate, time, weekday } from "./format";
+import { t, tDynamic } from "./i18n";
+import type { MetricDef, Unit } from "./metrics";
 import { readTokens } from "./theme";
 
 type Tokens = ReturnType<typeof readTokens>;
@@ -28,93 +29,6 @@ function axisBase(c: Tokens) {
 
 function dot(color: string) {
   return `<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin-right:6px"></span>`;
-}
-
-/** Import above zero, export below zero, over a time axis. */
-export function powerChartOption(
-  points: PowerPoint[],
-  opts: { start: number; end: number; bucketLabel: "time" | "datetime" },
-): ChartOption {
-  const c = readTokens();
-  const hasExport = points.some((p) => p[2] > 0);
-  const base = axisBase(c);
-  const area = (color: string) => ({
-    color: {
-      type: "linear",
-      x: 0,
-      y: 0,
-      x2: 0,
-      y2: 1,
-      colorStops: [
-        { offset: 0, color: `${color}33` },
-        { offset: 1, color: `${color}00` },
-      ],
-    },
-  });
-
-  return {
-    animation: false,
-    grid: { left: 8, right: 12, top: 12, bottom: 4, containLabel: true },
-    tooltip: {
-      ...tooltipBase(c),
-      trigger: "axis",
-      axisPointer: { type: "line", lineStyle: { color: c.border } },
-      formatter: (params: { value: [number, number]; seriesName: string; color: string }[]) => {
-        if (!params.length) return "";
-        const ts = params[0].value[0] / 1000;
-        const head =
-          opts.bucketLabel === "time" ? time(ts, true) : `${weekday(ts)} ${shortDate(ts)}, ${time(ts)}`;
-        const rows = params
-          .filter((p) => Math.abs(p.value[1]) > 0.5 || p.seriesName === t("legend.gridImport"))
-          .map((p) => `${dot(p.color)}${p.seriesName} <b style="margin-left:8px">${powerText(Math.abs(p.value[1]))}</b>`);
-        return `<div style="color:${c.muted};margin-bottom:4px">${head}</div>${rows.join("<br/>")}`;
-      },
-    },
-    xAxis: {
-      type: "time",
-      min: opts.start * 1000,
-      max: opts.end * 1000,
-      ...base,
-      splitLine: { show: false },
-      axisLine: { show: true, lineStyle: { color: c.border } },
-      axisLabel: {
-        ...base.axisLabel,
-        hideOverlap: true,
-        formatter: (v: number) =>
-          opts.bucketLabel === "time" ? time(v / 1000) : `${weekday(v / 1000)}`,
-      },
-    },
-    yAxis: {
-      type: "value",
-      ...base,
-      splitNumber: 3,
-      axisLabel: { ...base.axisLabel, formatter: (v: number) => axisPower(v) },
-    },
-    series: [
-      {
-        name: t("legend.gridImport"),
-        type: "line",
-        showSymbol: false,
-        smooth: 0.25,
-        sampling: "lttb",
-        lineStyle: { width: 1.75, color: c.import },
-        itemStyle: { color: c.import },
-        areaStyle: area(c.import),
-        data: points.map((p) => [p[0] * 1000, p[1]]),
-      },
-      {
-        name: t("legend.gridExport"),
-        type: "line",
-        showSymbol: false,
-        smooth: 0.25,
-        sampling: "lttb",
-        lineStyle: { width: hasExport ? 1.75 : 0, color: c.export },
-        itemStyle: { color: c.export },
-        areaStyle: area(c.export),
-        data: points.map((p) => [p[0] * 1000, -p[2]]),
-      },
-    ],
-  };
 }
 
 /** Energy bars per bucket: import up, export down. */
@@ -176,36 +90,62 @@ export function energyBarsOption(
   };
 }
 
-export type PhaseMetric = "p" | "i" | "v";
 
-const METRIC_UNIT: Record<PhaseMetric, string> = { p: "kW", i: "A", v: "V" };
+const UNIT_DIGITS: Record<Unit, number> = { kW: 2, A: 1, V: 0 };
+const UNIT_SCALE: Record<Unit, number> = { kW: 1000, A: 1, V: 1 };
 
-/** One line per phase (average), with min/max in the tooltip. */
-export function phaseChartOption(
-  data: PhaseHistory,
-  metric: PhaseMetric,
-  opts: { bucketLabel: "time" | "date" },
+export function metricLabel(metric: MetricDef): string {
+  return metric.label.includes(".") ? tDynamic(metric.label, metric.label) : metric.label;
+}
+
+/** Line chart of the selected metrics, with one y-axis per unit (at most two). */
+export function metricChartOption(
+  data: Series,
+  metrics: MetricDef[],
+  opts: { start: number; end: number; bucketLabel: "time" | "date" | "datetime"; showRange: boolean },
 ): ChartOption {
   const c = readTokens();
   const base = axisBase(c);
-  const colors = [c.l1, c.l2, c.l3];
-  const col = (name: string) => data.fields.indexOf(name);
-  const scale = metric === "p" ? 1000 : 1;
-  const digits = metric === "p" ? 2 : metric === "i" ? 1 : 0;
-  const unit = METRIC_UNIT[metric];
-  const value = (v: number | null | undefined) => (v == null ? "—" : num(v / scale, digits));
+  const units = [...new Set(metrics.map((m) => m.unit))];
+  const index = new Map(data.fields.map((f, i) => [f, i]));
+  const color = (m: MetricDef) => c[m.color];
+  const format = (unit: Unit, raw: number | null | undefined) =>
+    raw == null ? "—" : num(raw / UNIT_SCALE[unit], UNIT_DIGITS[unit]);
 
-  const series = [1, 2, 3].map((ph) => {
-    const avg = col(`${metric}_l${ph}_avg`);
+  const area = (hex: string) => ({
+    color: {
+      type: "linear",
+      x: 0,
+      y: 0,
+      x2: 0,
+      y2: 1,
+      colorStops: [
+        { offset: 0, color: `${hex}33` },
+        { offset: 1, color: `${hex}00` },
+      ],
+    },
+  });
+
+  const series = metrics.map((m) => {
+    const avg = index.get(`${m.field}_avg`);
+    const sign = m.negate ? -1 : 1;
+    const hasVoltageLimits = m.unit === "V" && metrics.find((x) => x.unit === "V") === m;
     return {
-      name: `L${ph}`,
+      id: m.id,
+      name: metricLabel(m),
       type: "line",
+      yAxisIndex: units.indexOf(m.unit),
       showSymbol: false,
+      smooth: m.area ? 0.25 : 0,
       sampling: "lttb",
-      lineStyle: { width: 1.5, color: colors[ph - 1] },
-      itemStyle: { color: colors[ph - 1] },
-      data: data.points.map((p) => [(p[0] as number) * 1000, p[avg] == null ? null : (p[avg] as number) / scale]),
-      ...(metric === "v" && ph === 1
+      lineStyle: { width: 1.6, color: color(m) },
+      itemStyle: { color: color(m) },
+      ...(m.area && metrics.length <= 2 ? { areaStyle: area(color(m)) } : {}),
+      data: data.points.map((p) => {
+        const v = avg == null ? null : p[avg];
+        return [(p[0] as number) * 1000, v == null ? null : (sign * v) / UNIT_SCALE[m.unit]];
+      }),
+      ...(hasVoltageLimits
         ? {
             markLine: {
               silent: true,
@@ -219,9 +159,36 @@ export function phaseChartOption(
     };
   });
 
+  const yAxis = units.map((unit, i) => ({
+    type: "value",
+    position: i === 0 ? "left" : "right",
+    ...base,
+    splitNumber: 3,
+    splitLine: { show: i === 0, lineStyle: { color: c.gridLine } },
+    name: unit,
+    nameTextStyle: { color: c.subtle, fontSize: 11, padding: i === 0 ? [0, 24, 0, 0] : [0, 0, 0, 24] },
+    ...(unit === "V"
+      ? {
+          min: (e: { min: number }) => Math.min(Math.floor(e.min - 2), 205),
+          max: (e: { max: number }) => Math.max(Math.ceil(e.max + 2), 255),
+        }
+      : {}),
+    axisLabel: {
+      ...base.axisLabel,
+      formatter: (v: number) => `${v < 0 ? "−" : ""}${num(Math.abs(v), unit === "kW" ? 1 : 0)}`,
+    },
+  }));
+
+  const timeLabel = (ts: number) =>
+    opts.bucketLabel === "time"
+      ? time(ts)
+      : opts.bucketLabel === "date"
+        ? shortDate(ts)
+        : `${weekday(ts)} ${time(ts)}`;
+
   return {
     animation: false,
-    grid: { left: 8, right: 36, top: 16, bottom: 4, containLabel: true },
+    grid: { left: 8, right: units.length > 1 ? 8 : 16, top: 28, bottom: 4, containLabel: true },
     tooltip: {
       ...tooltipBase(c),
       trigger: "axis",
@@ -229,43 +196,42 @@ export function phaseChartOption(
       formatter: (params: { dataIndex: number }[]) => {
         if (!params.length) return "";
         const point = data.points[params[0].dataIndex];
+        if (!point) return "";
         const ts = point[0] as number;
-        const head = opts.bucketLabel === "time" ? time(ts) : `${weekday(ts)} ${shortDate(ts)}`;
-        const rows = [1, 2, 3].map((ph) => {
-          const avg = point[col(`${metric}_l${ph}_avg`)];
+        const head =
+          opts.bucketLabel === "time" ? time(ts, data.bucket_seconds < 60) : `${weekday(ts)} ${shortDate(ts)}, ${time(ts)}`;
+        const rows = metrics.map((m) => {
+          const at = (suffix: string) => {
+            const i = index.get(`${m.field}_${suffix}`);
+            return i == null ? null : point[i];
+          };
+          const avg = at("avg");
           if (avg == null) return "";
-          const max = point[col(`${metric}_l${ph}_max`)];
-          const minIdx = col(`${metric}_l${ph}_min`);
+          const min = at("min");
+          const max = at("max");
           const range =
-            minIdx >= 0
-              ? t("phases.minMax", { min: value(point[minIdx]), max: value(max) })
-              : t("phases.max", { max: value(max) });
-          return `${dot(colors[ph - 1])}L${ph} <b style="margin-left:8px">${value(avg)} ${unit}</b> <span style="color:${c.muted};margin-left:6px">${range}</span>`;
+            opts.showRange && max != null && max !== avg
+              ? `<span style="color:${c.muted};margin-left:6px">${
+                  min != null
+                    ? t("phases.minMax", { min: format(m.unit, min), max: format(m.unit, max) })
+                    : t("phases.max", { max: format(m.unit, max) })
+                }</span>`
+              : "";
+          return `${dot(color(m))}${metricLabel(m)} <b style="margin-left:8px">${format(m.unit, avg)} ${m.unit}</b>${range}`;
         });
         return `<div style="color:${c.muted};margin-bottom:4px">${head}</div>${rows.filter(Boolean).join("<br/>")}`;
       },
     },
     xAxis: {
       type: "time",
-      min: data.start * 1000,
-      max: data.end * 1000,
+      min: opts.start * 1000,
+      max: opts.end * 1000,
       ...base,
       splitLine: { show: false },
       axisLine: { show: true, lineStyle: { color: c.border } },
-      axisLabel: {
-        ...base.axisLabel,
-        hideOverlap: true,
-        formatter: (v: number) => (opts.bucketLabel === "time" ? time(v / 1000) : shortDate(v / 1000)),
-      },
+      axisLabel: { ...base.axisLabel, hideOverlap: true, formatter: (v: number) => timeLabel(v / 1000) },
     },
-    yAxis: {
-      type: "value",
-      scale: metric === "v",
-      ...base,
-      splitNumber: 3,
-      ...(metric === "v" ? { min: (e: { min: number }) => Math.min(Math.floor(e.min - 2), 205), max: (e: { max: number }) => Math.max(Math.ceil(e.max + 2), 255) } : {}),
-      axisLabel: { ...base.axisLabel, formatter: (v: number) => `${num(v, metric === "p" ? 1 : 0)}` },
-    },
+    yAxis: yAxis.length ? yAxis : [{ type: "value", ...base }],
     series,
   };
 }

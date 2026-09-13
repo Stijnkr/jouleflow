@@ -43,13 +43,6 @@ export function euro(value: number | null | undefined, digits = 2): string {
   });
 }
 
-export function axisPower(w: number): string {
-  const abs = Math.abs(w);
-  const sign = w < 0 ? "−" : "";
-  if (abs >= 1000) return `${sign}${num(abs / 1000, abs % 1000 === 0 ? 0 : 1)}k`;
-  return `${sign}${num(abs)}`;
-}
-
 export function time(ts: number, seconds = false): string {
   return new Date(ts * 1000).toLocaleTimeString(locale(), {
     hour: "2-digit",

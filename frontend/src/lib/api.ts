@@ -47,15 +47,14 @@ export type Summary = {
 };
 
 export type PowerRange = "hour" | "day" | "week";
-/** [ts, import W, export W] */
-export type PowerPoint = [number, number, number];
 
-export type PowerSeries = {
-  range: PowerRange;
+/** Measurements over time. Each point lists values in the order of `fields` ("ts" first). */
+export type Series = {
   bucket_seconds: number;
   start: number;
   end: number;
-  points: PowerPoint[];
+  fields: string[];
+  points: (number | null)[][];
 };
 
 export type Period = "day" | "week" | "month" | "year";
@@ -82,20 +81,9 @@ export type History = {
   end: number;
   /** [bucket start, import kWh, export kWh, gas m³, cost €] */
   bars: Bar[];
-  power: PowerPoint[];
   totals: Totals & { cost: Cost | null };
   previous: Totals & { start: number; end: number; cost: Cost | null };
   first_data: number | null;
-};
-
-export type PhaseHistory = {
-  period: Period;
-  start: number;
-  end: number;
-  bucket_seconds: number;
-  /** Column names for each point, starting with "ts". */
-  fields: string[];
-  points: (number | null)[][];
 };
 
 export type SystemInfo = {
@@ -210,11 +198,11 @@ const get = <T,>(path: string) => request<T>(path);
 export const api = {
   live: () => get<LiveResponse>("/api/live"),
   summary: () => get<Summary>("/api/summary"),
-  power: (range: PowerRange) => get<PowerSeries>(`/api/power?range=${range}`),
+  series: (range: PowerRange) => get<Series>(`/api/series?range=${range}`),
   history: (period: Period, date: string) =>
     get<History>(`/api/history?period=${period}&date=${date}`),
-  phases: (period: Period, date: string) =>
-    get<PhaseHistory>(`/api/phases?period=${period}&date=${date}`),
+  historySeries: (period: Period, date: string) =>
+    get<Series>(`/api/history/series?period=${period}&date=${date}`),
   devices: () => get<DeviceStatus[]>("/api/devices"),
   system: () => get<SystemInfo>("/api/system"),
   tariffs: () => get<TariffSettings>("/api/tariffs"),

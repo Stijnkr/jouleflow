@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, datetime, timedelta
 from typing import Literal
 
-from .storage import COUNTERS, Storage
+from .storage import COUNTERS, STAT_COLUMNS, STATS, Storage
 from .tariffs import TariffSettings, bucket_cost, current_rate, day_of, sum_costs
 
 Range = Literal["hour", "day", "week"]
@@ -196,38 +197,81 @@ def _peak(storage: Storage, column: str, since: int) -> dict | None:
     return {"ts": best["ts"], "w": round(best["w"], 1)}
 
 
-# ---------------------------------------------------------------------- power series
+# ---------------------------------------------------------------------- measurement series
+
+# Fields every series point can contain. Rollups provide min/max per bucket.
+SERIES_FIELDS = (
+    "p_imp_avg", "p_imp_max", "p_exp_avg", "p_exp_max",
+    *(name for name in STAT_COLUMNS if re.fullmatch(r"[pvi]_l[123]_(avg|min|max)", name)),
+)  # fmt: skip
+
+_STAT_EXPR = {col: (sample_expr, rollup_expr) for col, sample_expr, rollup_expr in STATS}
+
+# (bucket seconds, source table) per live window.
+LIVE_WINDOWS: dict[str, tuple[int, int, str]] = {
+    "hour": (3600, 5, "samples"),
+    "day": (86400, 60, "agg_1m"),
+    "week": (7 * 86400, 900, "agg_1m"),
+}
+
+# Finest resolution that keeps the number of points reasonable, with fallbacks for
+# periods whose detailed data has expired.
+HISTORY_SOURCES: dict[str, tuple[tuple[int, str], ...]] = {
+    "day": ((60, "agg_1m"), (3600, "agg_1h")),
+    "week": ((900, "agg_1m"), (3600, "agg_1h")),
+    "month": ((3600, "agg_1h"), (86400, "agg_1d")),
+    "year": ((86400, "agg_1d"),),
+}
 
 
-def power_series(storage: Storage, range_: Range, now: int) -> dict:
-    """Import/export power over a recent window. Points are [ts, import_w, export_w]."""
-    if range_ == "hour":
-        bucket, since = 5, now - 3600
-        rows = storage.query(
-            "SELECT ts / 5 * 5 AS t, avg(p_imp) AS i, avg(p_exp) AS e FROM samples "
-            "WHERE ts >= ? GROUP BY t ORDER BY t",
-            (since,),
-        )
-    elif range_ == "day":
-        bucket, since = 60, now - 86400
-        rows = storage.query(
-            "SELECT ts AS t, p_imp_avg AS i, p_exp_avg AS e FROM agg_1m WHERE ts >= ? ORDER BY ts",
-            (since,),
-        )
-    else:
-        bucket, since = 900, now - 7 * 86400
-        rows = storage.query(
-            "SELECT ts / 900 * 900 AS t, sum(p_imp_avg * n) / sum(n) AS i, "
-            "sum(p_exp_avg * n) / sum(n) AS e FROM agg_1m WHERE ts >= ? GROUP BY t ORDER BY t",
-            (since,),
-        )
+def _series_rows(storage: Storage, source: str, bucket: int, start: int, end: int) -> list:
+    exprs = []
+    for field in SERIES_FIELDS:
+        sample_expr, rollup_expr = _STAT_EXPR[field]
+        exprs.append(f"{sample_expr if source == 'samples' else rollup_expr} AS {field}")
+    # Daily rollups are keyed by local midnight, so don't re-bucket them in UTC.
+    key = "ts" if source == "agg_1d" else f"ts / {bucket} * {bucket}"
+    return storage.query(
+        f"SELECT {key} AS t, {', '.join(exprs)} FROM {source} "
+        "WHERE ts >= ? AND ts < ? GROUP BY t ORDER BY t",
+        (start, end),
+    )
+
+
+def _series_payload(rows: list, bucket: int, start: int, end: int) -> dict:
+    def rounded(field: str, value: float | None) -> float | None:
+        if value is None:
+            return None
+        return round(value, 2 if field.startswith("i_") else 1)
+
     return {
-        "range": range_,
         "bucket_seconds": bucket,
-        "start": since,
-        "end": now,
-        "points": [[r["t"], round(r["i"], 1), round(r["e"], 1)] for r in rows],
+        "start": start,
+        "end": end,
+        "fields": ["ts", *SERIES_FIELDS],
+        "points": [[r["t"], *(rounded(f, r[f]) for f in SERIES_FIELDS)] for r in rows],
     }
+
+
+def live_series(storage: Storage, range_: Range, now: int) -> dict:
+    """All measurements over a recent window (last hour, day or week)."""
+    length, bucket, source = LIVE_WINDOWS[range_]
+    start = now - length
+    rows = _series_rows(storage, source, bucket, start, now + 1)
+    return {"range": range_, **_series_payload(rows, bucket, start, now)}
+
+
+def history_series(storage: Storage, period: Period, anchor: date) -> dict:
+    """All measurements over a calendar period, at the finest resolution still stored."""
+    start, end = period_bounds(storage, period, anchor)
+    rows: list = []
+    bucket = HISTORY_SOURCES[period][0][0]
+    for bucket_seconds, source in HISTORY_SOURCES[period]:
+        rows = _series_rows(storage, source, bucket_seconds, start, end)
+        bucket = bucket_seconds
+        if rows:
+            break
+    return {"period": period, **_series_payload(rows, bucket, start, end)}
 
 
 # ---------------------------------------------------------------------- history
@@ -388,19 +432,6 @@ def history(
         [b[0], _round(b[1]), _round(b[2]), _round(b[3]), _round(b[4], 2)] for b in buckets.values()
     ]
 
-    power: list[list] = []
-    if period == "day":
-        power_rows = storage.query(
-            "SELECT ts, p_imp_avg AS i, p_exp_avg AS e FROM agg_1m "
-            "WHERE ts >= ? AND ts < ? ORDER BY ts",
-            (start, end),
-        ) or storage.query(
-            "SELECT ts, p_imp_avg AS i, p_exp_avg AS e FROM agg_1h "
-            "WHERE ts >= ? AND ts < ? ORDER BY ts",
-            (start, end),
-        )
-        power = [[r["ts"], round(r["i"], 1), round(r["e"], 1)] for r in power_rows]
-
     first = storage.query_one("SELECT min(ts) AS t FROM agg_1d")["t"]
 
     return {
@@ -409,7 +440,6 @@ def history(
         "start": start,
         "end": end,
         "bars": bars,
-        "power": power,
         "totals": {
             **_totals(storage, start, end),
             "cost": sum_costs([c for c in row_costs if c]),
@@ -421,58 +451,4 @@ def history(
             "cost": _period_cost(storage, tariffs, prev_start, prev_end, now),
         },
         "first_data": first,
-    }
-
-
-# ---------------------------------------------------------------------- phases
-
-PHASE_FIELDS = tuple(
-    f"{q}_l{ph}_{fn}"
-    for ph in (1, 2, 3)
-    for q, fns in (
-        ("p", ("avg", "min", "max")),
-        ("v", ("avg", "min", "max")),
-        ("i", ("avg", "max")),
-    )
-    for fn in fns
-)
-
-# Finest resolution that keeps the number of points reasonable for each period.
-PHASE_SOURCES: dict[str, tuple[tuple[str, int], ...]] = {
-    "day": (("agg_1m", 60), ("agg_1h", 3600)),
-    "week": (("agg_1h", 3600),),
-    "month": (("agg_1h", 3600), ("agg_1d", 86400)),
-    "year": (("agg_1d", 86400),),
-}
-
-
-def phase_history(storage: Storage, period: Period, anchor: date) -> dict:
-    """Power, voltage and current per phase over a period, with min/max per bucket."""
-    start, end = period_bounds(storage, period, anchor)
-    rows: list = []
-    bucket = 0
-    for source, seconds in PHASE_SOURCES[period]:
-        rows = storage.query(
-            f"SELECT ts, {', '.join(PHASE_FIELDS)} FROM {source} "
-            "WHERE ts >= ? AND ts < ? ORDER BY ts",
-            (start, end),
-        )
-        bucket = seconds
-        if rows:
-            break
-
-    def rounded(value: float | None, digits: int) -> float | None:
-        return None if value is None else round(value, digits)
-
-    points = [
-        [r["ts"], *(rounded(r[f], 2 if f.startswith("i_") else 1) for f in PHASE_FIELDS)]
-        for r in rows
-    ]
-    return {
-        "period": period,
-        "start": start,
-        "end": end,
-        "bucket_seconds": bucket,
-        "fields": ["ts", *PHASE_FIELDS],
-        "points": points,
     }

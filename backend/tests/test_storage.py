@@ -213,7 +213,7 @@ def test_migration_from_schema_1_rebuilds_rollups(tmp_path):
     storage.close()
 
 
-def test_phase_history_uses_minutes_for_a_day(storage):
+def test_series_contain_phase_measurements_at_the_right_resolution(storage):
     start = local_ts(2026, 9, 13, 12, 0)
     readings = make_readings(start, 180, import_w=800)
     for r in readings:
@@ -221,11 +221,19 @@ def test_phase_history_uses_minutes_for_a_day(storage):
     storage.insert_samples(readings)
     storage.rollup_all(start + 240)
 
-    day = queries.phase_history(storage, "day", date(2026, 9, 13))
-    assert day["bucket_seconds"] == 60
-    assert len(day["points"]) == 3
-    i_max = day["fields"].index("i_l1_max")
-    assert day["points"][0][i_max] == 3.5
+    live = queries.live_series(storage, "hour", start + 180)
+    assert live["bucket_seconds"] == 5 and len(live["points"]) == 36
+    fields = live["fields"]
+    assert live["points"][0][fields.index("p_imp_avg")] == 800
+    assert live["points"][0][fields.index("i_l1_max")] == 3.5
 
-    year = queries.phase_history(storage, "year", date(2026, 9, 13))
+    day = queries.history_series(storage, "day", date(2026, 9, 13))
+    assert day["bucket_seconds"] == 60 and len(day["points"]) == 3
+    assert day["points"][0][day["fields"].index("i_l1_max")] == 3.5
+
+    week = queries.history_series(storage, "week", date(2026, 9, 13))
+    assert week["bucket_seconds"] == 900 and len(week["points"]) == 1
+
+    year = queries.history_series(storage, "year", date(2026, 9, 13))
     assert year["bucket_seconds"] == 86400 and len(year["points"]) == 1
+    assert year["points"][0][0] == local_ts(2026, 9, 13)

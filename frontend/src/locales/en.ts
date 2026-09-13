@@ -88,6 +88,16 @@ export const en = {
   "resolution.minute": "per minute",
   "resolution.hour": "per hour",
   "resolution.day": "per day",
+  "metrics.title": "Measurements",
+  "metrics.group.grid": "Grid",
+  "metrics.group.power": "Power",
+  "metrics.group.current": "Current",
+  "metrics.group.voltage": "Voltage",
+  "metrics.empty": "Choose what you want to see above. You can combine up to {max} kinds of measurement.",
+  "metrics.liveDescription": "{range} · tap to choose what you see",
+  "metrics.historyDescription": "Average {resolution} · tap to choose what you see",
+  "resolution.fiveSeconds": "per 5 seconds",
+  "resolution.quarter": "per 15 minutes",
 
   // History
   "history.title": "History",

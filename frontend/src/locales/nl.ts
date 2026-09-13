@@ -90,6 +90,16 @@ export const nl: Record<MessageKey, string> = {
   "resolution.minute": "per minuut",
   "resolution.hour": "per uur",
   "resolution.day": "per dag",
+  "metrics.title": "Metingen",
+  "metrics.group.grid": "Net",
+  "metrics.group.power": "Vermogen",
+  "metrics.group.current": "Stroom",
+  "metrics.group.voltage": "Spanning",
+  "metrics.empty": "Kies hierboven wat je wilt zien. Je kunt tot {max} soorten metingen combineren.",
+  "metrics.liveDescription": "{range} · tik om te kiezen wat je ziet",
+  "metrics.historyDescription": "Gemiddeld {resolution} · tik om te kiezen wat je ziet",
+  "resolution.fiveSeconds": "per 5 seconden",
+  "resolution.quarter": "per kwartier",
 
   // Geschiedenis
   "history.title": "Geschiedenis",

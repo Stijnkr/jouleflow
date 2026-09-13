@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Moon, Sun } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Chart } from "../components/Chart";
+import { useEffect, useState } from "react";
+import { MetricChart } from "../components/MetricChart";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
-import { api, type PowerPoint, type PowerRange, type Reading, type Summary } from "../lib/api";
-import { powerChartOption } from "../lib/charts";
+import { api, type PowerRange, type Reading, type Series, type Summary } from "../lib/api";
 import { energy, euro, kw, longDate, num, power, powerText, time } from "../lib/format";
 import { useLive, useNow } from "../lib/live";
+import { DEFAULT_P1_SELECTION, P1_METRICS, readingToPoint } from "../lib/metrics";
 import { t } from "../lib/i18n";
 import { useTheme } from "../lib/theme";
 
@@ -74,7 +74,7 @@ export function LivePage() {
           )}
         </div>
 
-        <PowerCard range={range} />
+        <MeasurementsCard range={range} />
 
         <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-[3fr_2fr]">
           <EnergyFlowCard reading={current} />
@@ -238,84 +238,62 @@ function NetCard({ summary }: { summary?: Summary }) {
   );
 }
 
-// ---------------------------------------------------------------------------- power chart
+// ---------------------------------------------------------------------------- measurements
 
-function PowerCard({ range }: { range: PowerRange }) {
+const LIVE_BUCKET_LABEL = { hour: "time", day: "time", week: "datetime" } as const;
+
+function MeasurementsCard({ range }: { range: PowerRange }) {
   const { subscribe } = useLive();
-  const { resolved } = useTheme();
   const query = useQuery({
-    queryKey: ["power", range],
-    queryFn: () => api.power(range),
+    queryKey: ["series", range],
+    queryFn: () => api.series(range),
     refetchInterval: range === "hour" ? 5 * 60_000 : 60_000,
   });
-  const [points, setPoints] = useState<PowerPoint[]>([]);
+  const [data, setData] = useState<Series | undefined>();
   const [end, setEnd] = useState(() => Math.floor(Date.now() / 1000));
 
   useEffect(() => {
     if (query.data) {
-      setPoints(query.data.points);
+      setData(query.data);
       setEnd(query.data.end);
     }
   }, [query.data]);
 
-  // Append live readings to the hour view.
+  // Append every live reading to the hour view.
   useEffect(() => {
     if (range !== "hour") return;
     return subscribe((r) => {
       setEnd(r.ts);
-      setPoints((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && r.ts <= last[0]) return prev;
+      setData((prev) => {
+        if (!prev) return prev;
+        const last = prev.points[prev.points.length - 1];
+        if (last && r.ts <= (last[0] as number)) return prev;
         const cutoff = r.ts - RANGE_SECONDS.hour;
-        const next = prev[0] && prev[0][0] < cutoff ? prev.filter((p) => p[0] >= cutoff) : prev;
-        return [...next, [r.ts, r.power_import, r.power_export]];
+        const points = prev.points.filter((p) => (p[0] as number) >= cutoff);
+        points.push(readingToPoint(r, prev.fields));
+        return { ...prev, points };
       });
     });
   }, [range, subscribe]);
 
-  const hasExport = points.some((p) => p[2] > 0);
-  const option = useMemo(
-    () =>
-      powerChartOption(points, {
-        start: end - RANGE_SECONDS[range],
-        end,
-        bucketLabel: range === "week" ? "datetime" : "time",
-      }),
-    // `resolved` is a dependency because chart colours are read from the active theme.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [points, end, range, resolved],
-  );
-
   return (
     <Card>
       <CardHeader
-        title={t("live.power")}
-        description={t(RANGE_LABEL[range])}
-        action={
-          <div className="flex gap-2">
-            <Legend color="bg-import" label={t("legend.gridImport")} />
-            {hasExport && <Legend color="bg-export" label={t("legend.gridExport")} />}
-          </div>
-        }
+        title={`${t("status.p1")} · ${t("metrics.title")}`}
+        description={t("metrics.liveDescription", { range: t(RANGE_LABEL[range]) })}
       />
-      <div className="relative px-3 pt-4 pb-4 sm:px-5">
-        <Chart option={option} className="h-64 w-full sm:h-80" />
-        {query.isSuccess && points.length === 0 && (
-          <div className="absolute inset-0 grid place-items-center text-sm text-muted">
-            {t("live.collecting")}
-          </div>
-        )}
-      </div>
+      <MetricChart
+        data={data}
+        catalog={P1_METRICS}
+        defaultSelection={DEFAULT_P1_SELECTION}
+        storageKey="live"
+        start={end - RANGE_SECONDS[range]}
+        end={end}
+        bucketLabel={LIVE_BUCKET_LABEL[range]}
+        showRange={range !== "hour"}
+        emptyText={query.isSuccess ? t("live.collecting") : undefined}
+      />
     </Card>
-  );
-}
-
-function Legend({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="hidden items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm text-muted sm:inline-flex">
-      <span className={cn("h-0.5 w-2.5 rounded-full", color)} />
-      {label}
-    </span>
   );
 }
 

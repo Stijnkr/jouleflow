@@ -2,11 +2,14 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Chart } from "../components/Chart";
+import { MetricChart } from "../components/MetricChart";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
 import { api, type Cost, type History, type Period } from "../lib/api";
-import { energyBarsOption, phaseChartOption, powerChartOption, type PhaseMetric } from "../lib/charts";
-import { energy, euro, isoDate, kw, longDate, monthName, num, powerText, shortDate, time, weekday } from "../lib/format";
+import { energyBarsOption } from "../lib/charts";
+import { energy, euro, isoDate, kw, longDate, monthName, powerText, shortDate, time, weekday } from "../lib/format";
 import { t } from "../lib/i18n";
+import { DEFAULT_P1_SELECTION, P1_METRICS } from "../lib/metrics";
+import type { MessageKey } from "../locales/en";
 import { useTheme } from "../lib/theme";
 
 const PERIODS = ["day", "week", "month", "year"] as const;
@@ -86,14 +89,6 @@ export function HistoryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [h, period, resolved]);
 
-  const powerOption = useMemo(
-    () =>
-      h && period === "day" && h.power.length
-        ? powerChartOption(h.power, { start: h.start, end: h.end, bucketLabel: "time" })
-        : null,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [h, period, resolved],
-  );
 
   const empty = h != null && h.totals.import == null;
 
@@ -213,16 +208,8 @@ export function HistoryPage() {
           </div>
         </Card>
 
-        <PhaseCard period={period} anchor={isoDate(anchor)} />
+        <MeasurementsCard period={period} anchor={isoDate(anchor)} />
 
-        {powerOption && (
-          <Card>
-            <CardHeader title={t("live.power")} description={t("history.powerAverage")} />
-            <div className="px-3 pt-4 pb-4 sm:px-5">
-              <Chart option={powerOption} notMerge className="h-56 w-full sm:h-72" />
-            </div>
-          </Card>
-        )}
       </div>
     </>
   );
@@ -289,95 +276,44 @@ function TotalCard({
   );
 }
 
-const RESOLUTION: Record<number, "resolution.minute" | "resolution.hour" | "resolution.day"> = {
+const RESOLUTION: Record<number, MessageKey> = {
+  5: "resolution.fiveSeconds",
   60: "resolution.minute",
+  900: "resolution.quarter",
   3600: "resolution.hour",
   86400: "resolution.day",
 };
 
-const METRIC_DESCRIPTION = {
-  p: "phases.descPower",
-  i: "phases.descCurrent",
-  v: "phases.descVoltage",
-} as const;
-
-function PhaseCard({ period, anchor }: { period: Period; anchor: string }) {
-  const { resolved } = useTheme();
-  const [metric, setMetric] = useState<PhaseMetric>("i");
+function MeasurementsCard({ period, anchor }: { period: Period; anchor: string }) {
   const query = useQuery({
-    queryKey: ["phases", period, anchor],
-    queryFn: () => api.phases(period, anchor),
+    queryKey: ["history-series", period, anchor],
+    queryFn: () => api.historySeries(period, anchor),
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
   });
   const data = query.data;
 
-  const option = useMemo(
-    () =>
-      data && data.points.length
-        ? phaseChartOption(data, metric, { bucketLabel: period === "day" ? "time" : "date" })
-        : null,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, metric, period, resolved],
-  );
-
-  // Extremes per phase over the whole period.
-  const summaries = [1, 2, 3].map((ph) => {
-    if (!data) return null;
-    const values = (name: string) => {
-      const idx = data.fields.indexOf(name);
-      return data.points.map((p) => p[idx]).filter((v): v is number => v != null);
-    };
-    const lows = values(`${metric}_l${ph}_min`);
-    const highs = values(`${metric}_l${ph}_max`);
-    if (!highs.length) return null;
-    const min = lows.length ? Math.min(...lows) : null;
-    const max = Math.max(...highs);
-    if (metric === "i") return t("phases.summaryCurrent", { max: num(max, 1) });
-    if (metric === "v") return t("phases.summaryVoltage", { min: num(min ?? max, 0), max: num(max, 0) });
-    return t("phases.summaryPower", { min: num((min ?? 0) / 1000, 2), max: num(max / 1000, 2) });
-  });
-
   return (
     <Card>
       <CardHeader
-        title={t("phases.title")}
+        title={`${t("status.p1")} · ${t("metrics.title")}`}
         description={
           data
-            ? t(METRIC_DESCRIPTION[metric], { resolution: t(RESOLUTION[data.bucket_seconds] ?? "resolution.hour") })
+            ? t("metrics.historyDescription", {
+                resolution: t(RESOLUTION[data.bucket_seconds] ?? "resolution.hour"),
+              })
             : undefined
         }
-        action={
-          <Segmented<PhaseMetric>
-            size="sm"
-            value={metric}
-            onChange={setMetric}
-            options={[
-              { value: "p", label: t("phases.metricPower") },
-              { value: "i", label: t("phases.metricCurrent") },
-              { value: "v", label: t("phases.metricVoltage") },
-            ]}
-          />
-        }
       />
-      <div className="relative px-3 pt-4 sm:px-5">
-        {option ? (
-          <Chart option={option} notMerge className="h-56 w-full sm:h-72" />
-        ) : (
-          <div className="grid h-56 place-items-center text-sm text-muted sm:h-72">
-            {t("history.noData")}
-          </div>
-        )}
-      </div>
-      <div className="grid grid-cols-3 gap-2 border-t border-border px-5 py-4 text-sm sm:px-6">
-        {summaries.map((summary, i) => (
-          <div key={i} className="flex min-w-0 items-center gap-2">
-            <span className={cn("size-2.5 shrink-0 rounded-sm", ["bg-l1", "bg-l2", "bg-l3"][i])} />
-            <span className="font-medium">L{i + 1}</span>
-            <span className="tabular truncate text-muted">{summary ?? "—"}</span>
-          </div>
-        ))}
-      </div>
+      <MetricChart
+        data={data}
+        catalog={P1_METRICS}
+        defaultSelection={DEFAULT_P1_SELECTION}
+        storageKey="history"
+        start={data?.start ?? 0}
+        end={data?.end ?? 0}
+        bucketLabel={period === "day" ? "time" : period === "week" ? "datetime" : "date"}
+      />
     </Card>
   );
 }
