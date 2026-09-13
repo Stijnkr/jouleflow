@@ -120,11 +120,10 @@ export function MetricChart({
 
   const zoomBy = (factor: number) => {
     const [a, b] = zoom ?? [windowStart, windowEnd];
-    // Zooming in on a live chart keeps the most recent part in view.
-    const anchor = !zoom && live ? b : (a + b) / 2;
+    // On a live chart, keep the most recent moment in view while it is visible.
+    const atEnd = live && b >= windowEnd - (data?.bucket_seconds ?? 1) * 1000;
     const span = (b - a) * factor;
-    const ratio = !zoom && live ? 1 : 0.5;
-    applyZoom([anchor - span * ratio, anchor + span * (1 - ratio)]);
+    applyZoom(atEnd ? [b - span, b] : [(a + b) / 2 - span / 2, (a + b) / 2 + span / 2]);
   };
   const { resolved } = useTheme();
   const [selected, setSelected] = useSelection(storageKey, defaultSelection, catalog);
