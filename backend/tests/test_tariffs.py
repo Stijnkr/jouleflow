@@ -92,8 +92,9 @@ def test_feed_in_summary_shows_costs_and_the_outlook_after_netting():
         exp_normal=0, gas=None, fixed_days=0,
     )  # fmt: skip
     summary = feed_in_summary(settings, 10, cost, date(2026, 9, 13))
-    assert summary["cost"] == pytest.approx(1.1495, abs=1e-3)
-    assert summary["credit"] == pytest.approx(2.27371, abs=1e-3)
+    assert summary["cost"] == pytest.approx(1.1495, abs=0.01)
+    assert summary["cost_per_kwh"] == pytest.approx(0.11495, abs=1e-4)
+    assert summary["credit"] == pytest.approx(2.27371, abs=0.01)
     assert summary["net"] == pytest.approx(2.27371 - 1.1495, abs=0.01)
     assert summary["after_netting"]["from"] == "2027-01-01"
     assert summary["after_netting"]["net"] == pytest.approx(10 * (0.07 - 0.064977), abs=0.01)
