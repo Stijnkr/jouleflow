@@ -2,6 +2,8 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Chart } from "../components/Chart";
+import { EnergyBalance } from "../components/EnergyBalance";
+import { EnergyFlow, energyFlow, flowSentence } from "../components/EnergyFlow";
 import { MetricChart } from "../components/MetricChart";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
 import { api, type Cost, type FeedInSummary, type History, type Period } from "../lib/api";
@@ -92,12 +94,7 @@ export function HistoryPage() {
 
   const empty = h != null && h.totals.import == null;
   const withSolar = h?.totals.solar != null;
-  const selfUsedPct =
-    h?.totals.solar ? Math.round((Math.max(h.totals.solar - (h.totals.export ?? 0), 0) / h.totals.solar) * 100) : null;
-  const selfSufficient =
-    h?.totals.consumption && h.totals.solar != null
-      ? Math.round((Math.max(h.totals.solar - (h.totals.export ?? 0), 0) / h.totals.consumption) * 100)
-      : null;
+  const periodFlow = h ? energyFlow(h.totals) : null;
 
   return (
     <>
@@ -139,47 +136,54 @@ export function HistoryPage() {
         )}
       >
         {withSolar && h ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4">
-            <TotalCard
-              label={t("history.used")}
-              value={h.totals.consumption}
-              previous={h.previous.consumption}
-              period={period}
-              lowerIsGood
-              extra={selfSufficient != null ? t("history.selfSufficient", { pct: selfSufficient }) : undefined}
-            />
-            <TotalCard
-              label={t("history.produced")}
-              value={h.totals.solar}
-              previous={h.previous.solar}
-              period={period}
-              lowerIsGood={false}
-              extra={selfUsedPct != null ? t("history.selfUsedPct", { pct: selfUsedPct }) : undefined}
-            />
-            <Card className="p-5 sm:p-6">
-              <div className="text-sm text-muted">{t("history.gridExchange")}</div>
-              <dl className="mt-4 flex flex-col gap-2.5">
-                <div className="flex items-center gap-2.5">
-                  <span className="size-2.5 rounded-sm bg-grid" />
-                  <dt className="text-sm text-muted">{t("chart.imported")}</dt>
-                  <dd className="tabular ml-auto text-xl font-semibold tracking-tight">
-                    {energy(h.totals.import)} <span className="text-sm font-normal text-muted">kWh</span>
-                  </dd>
-                </div>
-                <div className="flex items-center gap-2.5">
-                  <span className="size-2.5 rounded-sm bg-export" />
-                  <dt className="text-sm text-muted">{t("chart.exported")}</dt>
-                  <dd className="tabular ml-auto text-xl font-semibold tracking-tight">
-                    {energy(h.totals.export)} <span className="text-sm font-normal text-muted">kWh</span>
-                  </dd>
-                </div>
-              </dl>
+          <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(320px,2fr)]">
+            <Card className="px-5 pt-5 pb-5 sm:px-6 sm:pt-6">
+              <h2 className="text-[15px] font-semibold tracking-tight">{t("flow.title")}</h2>
+              <p className="mt-3 max-w-[52ch] text-lg leading-snug font-medium tracking-tight text-balance sm:text-xl">
+                {flowSentence(periodFlow, "kWh", true)}
+              </p>
+              {h.previous.consumption != null && h.totals.consumption != null && h.previous.consumption > 0 && (
+                <p
+                  className={cn(
+                    "mt-1.5 text-sm",
+                    h.totals.consumption < h.previous.consumption ? "text-export" : "text-muted",
+                  )}
+                >
+                  {compare(((h.totals.consumption - h.previous.consumption) / h.previous.consumption) * 100, period)}
+                </p>
+              )}
+              <div className="mt-4">
+                <EnergyFlow values={periodFlow} unit="kWh" hasSolar animate={false} />
+              </div>
             </Card>
-            {h.totals.cost ? (
-              <CostCard cost={h.totals.cost} previous={h.previous.cost} period={period} />
-            ) : (
-              <PeakCard h={h} />
-            )}
+            <Card className="flex flex-col px-5 pt-5 pb-1 sm:px-6 sm:pt-6">
+              <div className="mb-5 flex items-baseline justify-between gap-3">
+                <h2 className="text-[15px] font-semibold tracking-tight">{t("balance.keyFigures")}</h2>
+              </div>
+              <EnergyBalance
+                flow={periodFlow}
+                hasSolar
+                cost={h.totals.cost?.total}
+                costNote={
+                  h.totals.cost && (
+                    <>
+                      {t("live.costBreakdown", {
+                        energy: euro(
+                          h.totals.cost.import - h.totals.cost.export_credit + h.totals.cost.export_cost + h.totals.cost.gas,
+                        ),
+                        fixed: euro(h.totals.cost.fixed),
+                      })}
+                      {h.previous.cost && h.previous.cost.total > 0 && (
+                        <>
+                          <br />
+                          {compare(((h.totals.cost.total - h.previous.cost.total) / h.previous.cost.total) * 100, period)}
+                        </>
+                      )}
+                    </>
+                  )
+                }
+              />
+            </Card>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4">

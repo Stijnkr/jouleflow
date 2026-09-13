@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Moon, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { EnergyFlow } from "../components/EnergyFlow";
+import { EnergyBalance } from "../components/EnergyBalance";
+import { EnergyFlow, energyFlow, flowSentence, powerFlow } from "../components/EnergyFlow";
 import { MetricChart } from "../components/MetricChart";
 import { PlugSwitch } from "../components/PlugSwitch";
 import { Card, CardHeader, cn, IconButton, PageHeader, Segmented } from "../components/ui";
@@ -72,11 +73,7 @@ export function LivePage() {
 
       <div className="mx-auto flex max-w-[1400px] flex-col gap-4 p-4 sm:gap-6 sm:p-8">
         <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(320px,2fr)]">
-          <Card className="px-5 pt-6 pb-5 sm:px-8 sm:pt-8 sm:pb-6">
-            <EnergyFlow netW={current?.power_net ?? null} solarW={solarW} hasSolar={hasSolar}>
-              <PlugConsumers />
-            </EnergyFlow>
-          </Card>
+          <FlowCard reading={current} summary={summary.data} hasSolar={hasSolar} solarW={solarW} />
           <TodayCard summary={summary.data} hasSolar={hasSolar} />
         </div>
 
@@ -88,141 +85,87 @@ export function LivePage() {
   );
 }
 
-// ---------------------------------------------------------------------------- today
+// ---------------------------------------------------------------------------- flow & today
 
-/** A part-to-whole bar with its parts listed underneath. */
-function Split({
-  total,
-  parts,
+function FlowCard({
+  reading,
+  summary,
+  hasSolar,
+  solarW,
 }: {
-  total: number | null | undefined;
-  parts: { label: string; value: number | null | undefined; color: string }[];
+  reading: Reading | null;
+  summary?: Summary;
+  hasSolar: boolean;
+  solarW: number;
 }) {
-  const sum = parts.reduce((s, p) => s + Math.max(p.value ?? 0, 0), 0);
-  return (
-    <>
-      <div className="mt-3 flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-muted-surface">
-        {total != null &&
-          sum > 0 &&
-          parts.map((p) =>
-            (p.value ?? 0) > 0 ? (
-              <div
-                key={p.label}
-                className={cn("h-full transition-[width] duration-700 first:rounded-l-full last:rounded-r-full", p.color)}
-                style={{ width: `${((p.value ?? 0) / sum) * 100}%` }}
-              />
-            ) : null,
-          )}
-      </div>
-      <dl className="mt-3 flex flex-col gap-1.5 text-sm">
-        {parts.map((p) => (
-          <div key={p.label} className="flex items-center gap-2">
-            <span className={cn("size-2.5 shrink-0 rounded-sm", p.color)} />
-            <dt className="text-muted">{p.label}</dt>
-            <dd className="tabular ml-auto font-medium">{energy(p.value)} kWh</dd>
-          </div>
-        ))}
-      </dl>
-    </>
-  );
-}
+  const [mode, setMode] = useState<"now" | "today">("now");
+  const values =
+    mode === "now"
+      ? reading
+        ? powerFlow(reading.power_net, hasSolar ? solarW : 0)
+        : null
+      : summary
+        ? energyFlow({ ...summary.today, solar: hasSolar ? summary.today.solar : null })
+        : null;
+  const unit = mode === "now" ? "W" : "kWh";
 
-function Headline({ label, value, unit }: { label: string; value: string; unit: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-3">
-      <h3 className="text-sm font-medium text-muted">{label}</h3>
-      <div className="tabular flex items-baseline gap-1">
-        <span className="text-[28px] leading-none font-semibold tracking-tight">{value}</span>
-        {unit && <span className="text-sm text-muted">{unit}</span>}
+    <Card className="px-5 pt-5 pb-5 sm:px-6 sm:pt-6">
+      <div className="flex items-start justify-between gap-4">
+        <h2 className="text-[15px] font-semibold tracking-tight">{t("flow.title")}</h2>
+        <Segmented
+          size="sm"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "now", label: t("flow.now") },
+            { value: "today", label: t("flow.today") },
+          ]}
+        />
       </div>
-    </div>
-  );
-}
-
-function Change({ pct, lowerIsGood }: { pct: number | null | undefined; lowerIsGood: boolean }) {
-  if (pct == null) return null;
-  const lower = pct < 0;
-  return (
-    <p className={cn("mt-2 text-[13px]", lower === lowerIsGood ? "text-export" : "text-muted")}>
-      {t(lower ? "change.lessThanYesterday" : "change.moreThanYesterday", { pct: Math.abs(Math.round(pct)) })}
-    </p>
+      <p className="mt-3 max-w-[52ch] text-lg leading-snug font-medium tracking-tight text-balance sm:text-xl">
+        {flowSentence(values, unit, hasSolar)}
+      </p>
+      <div className="mt-4">
+        <EnergyFlow values={values} unit={unit} hasSolar={hasSolar} animate={mode === "now"} />
+      </div>
+      <PlugConsumers />
+    </Card>
   );
 }
 
 const RATE_LABEL = { normal: "rate.normal", low: "rate.low", single: "rate.single" } as const;
 
 function TodayCard({ summary, hasSolar }: { summary?: Summary; hasSolar: boolean }) {
-  const today = summary?.today;
-  const solar = hasSolar ? today?.solar : null;
-  const withSolar = solar != null;
-  const selfUsed = withSolar ? Math.max(solar - (today?.export ?? 0), 0) : null;
-  const used = today?.consumption ?? null;
+  const flow = summary ? energyFlow({ ...summary.today, solar: hasSolar ? summary.today.solar : null }) : null;
   const cost = summary?.cost_today;
   const rate = summary?.rate_now;
-
   return (
-    <Card className="flex flex-col">
-      <CardHeader title={t("today.title")} />
-      <div className="flex flex-1 flex-col divide-y divide-border px-5 sm:px-6">
-        {withSolar ? (
-          <>
-            <section className="py-5">
-              <Headline label={t("today.used")} value={energy(used)} unit="kWh" />
-              <Split
-                total={used}
-                parts={[
-                  { label: t("today.fromSolar"), value: selfUsed, color: "bg-solar" },
-                  { label: t("today.fromGrid"), value: today?.import, color: "bg-grid" },
-                ]}
-              />
-              {used != null && used > 0 && selfUsed != null && (
-                <p className="mt-2 text-[13px] text-muted">
-                  {t("today.selfSufficient", { pct: Math.round((selfUsed / used) * 100) })}
-                </p>
-              )}
-            </section>
-            <section className="py-5">
-              <Headline label={t("today.produced")} value={energy(solar)} unit="kWh" />
-              <Split
-                total={solar}
-                parts={[
-                  { label: t("today.selfUsed"), value: selfUsed, color: "bg-solar" },
-                  { label: t("today.exported"), value: today?.export, color: "bg-export" },
-                ]}
-              />
-              <Change pct={summary?.change_pct.solar} lowerIsGood={false} />
-            </section>
-          </>
-        ) : (
-          <section className="py-5">
-            <Headline label={t("today.imported")} value={energy(today?.import)} unit="kWh" />
-            <Change pct={summary?.change_pct.import} lowerIsGood />
-            <div className="mt-5">
-              <Headline label={t("today.exported")} value={energy(today?.export)} unit="kWh" />
-            </div>
-            {today?.gas != null && today.gas > 0 && (
-              <div className="mt-5">
-                <Headline label={t("live.gasToday")} value={energy(today.gas)} unit="m³" />
-              </div>
-            )}
-          </section>
-        )}
-        {cost && (
-          <section className="py-5">
-            <Headline label={t("today.cost")} value={euro(cost.total)} unit="" />
-            <p className="tabular mt-2 text-[13px] text-muted">
+    <Card className="flex flex-col px-5 pt-5 pb-1 sm:px-6 sm:pt-6">
+      <div className="mb-5 flex items-baseline justify-between gap-3">
+        <h2 className="text-[15px] font-semibold tracking-tight">{t("today.title")}</h2>
+        <span className="text-[13px] text-muted">{t("balance.keyFigures")}</span>
+      </div>
+      <EnergyBalance
+        flow={flow}
+        hasSolar={hasSolar && summary?.today.solar != null}
+        cost={cost?.total}
+        costNote={
+          cost && (
+            <>
               {rate
                 ? t("live.rateNow", { price: euro(rate.import_price, 4), rate: t(RATE_LABEL[rate.rate]) })
                 : t("live.fixedIncluded", { amount: euro(cost.fixed) })}
-            </p>
-            {cost.export_cost > 0 && (
-              <p className="tabular mt-1 text-[13px] text-muted">
-                {t("live.feedInCostToday", { amount: euro(cost.export_cost) })}
-              </p>
-            )}
-          </section>
-        )}
-      </div>
+              {cost.export_cost > 0 && (
+                <>
+                  <br />
+                  {t("live.feedInCostToday", { amount: euro(cost.export_cost) })}
+                </>
+              )}
+            </>
+          )
+        }
+      />
     </Card>
   );
 }
