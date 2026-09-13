@@ -83,6 +83,8 @@ export function readTokens() {
     card: v("--card"),
     import: v("--import"),
     export: v("--export"),
+    grid: v("--grid"),
+    solar: v("--solar"),
     gas: v("--gas"),
     l1: v("--l1"),
     l2: v("--l2"),

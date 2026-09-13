@@ -333,11 +333,14 @@ def create_app(cfg: Settings = settings) -> FastAPI:
 
     @app.get("/api/summary")
     async def summary() -> dict:
-        return await asyncio.to_thread(queries.today_summary, storage, int(time.time()), tariffs)
+        now = int(time.time())
+        result = await asyncio.to_thread(queries.today_summary, storage, now, tariffs)
+        return await asyncio.to_thread(solar.add_to_summary, result, now)
 
     @app.get("/api/series")
     async def live_series(range: queries.Range = "hour") -> dict:  # noqa: A002
-        return await asyncio.to_thread(queries.live_series, storage, range, int(time.time()))
+        result = await asyncio.to_thread(queries.live_series, storage, range, int(time.time()))
+        return await asyncio.to_thread(solar.add_to_series, result)
 
     @app.get("/api/history")
     async def history(
@@ -348,7 +351,8 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             anchor = date.fromisoformat(date_) if date_ else datetime.now(storage.tz).date()
         except ValueError as exc:
             raise HTTPException(400, "date must be YYYY-MM-DD") from exc
-        return await asyncio.to_thread(queries.history, storage, period, anchor, tariffs)
+        result = await asyncio.to_thread(queries.history, storage, period, anchor, tariffs)
+        return await asyncio.to_thread(solar.add_to_history, result)
 
     @app.get("/api/history/series")
     async def history_series(
@@ -359,7 +363,8 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             anchor = date.fromisoformat(date_) if date_ else datetime.now(storage.tz).date()
         except ValueError as exc:
             raise HTTPException(400, "date must be YYYY-MM-DD") from exc
-        return await asyncio.to_thread(queries.history_series, storage, period, anchor)
+        result = await asyncio.to_thread(queries.history_series, storage, period, anchor)
+        return await asyncio.to_thread(solar.add_to_series, result)
 
     @app.get("/api/plugs")
     async def list_plugs() -> dict:

@@ -14,6 +14,9 @@
   --subtle: #9a9a96;
   --import: #e8552f;
   --export: #10a36e;
+  /* Energy sources, validated as a colour-blind-safe set: grid, solar, feed-in. */
+  --grid: #6a4fd6;
+  --solar: #eda100;
   --gas: #3b82f6;
   --l1: #d97706;
   --l2: #7c3aed;
@@ -31,7 +34,9 @@
   --muted: #a3a3a0;
   --subtle: #6f6f6c;
   --import: #f26444;
-  --export: #34d399;
+  --export: #199e70;
+  --grid: #9085e9;
+  --solar: #c98500;
   --gas: #60a5fa;
   --l1: #fbbf24;
   --l2: #a78bfa;
@@ -51,6 +56,8 @@
   --color-subtle: var(--subtle);
   --color-import: var(--import);
   --color-export: var(--export);
+  --color-grid: var(--grid);
+  --color-solar: var(--solar);
   --color-gas: var(--gas);
   --color-l1: var(--l1);
   --color-l2: var(--l2);
@@ -89,8 +96,26 @@ body {
   animation-direction: reverse;
 }
 
+/* Energy moving along a connector: round dots whose pace doesn't depend on length. */
+@keyframes flow-dots {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+.flow-dots {
+  stroke-dasharray: 0.1 16;
+  stroke-linecap: round;
+  animation: flow-dots 0.9s linear infinite;
+}
+
+.flow-dots.reverse {
+  animation-direction: reverse;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .flow-line {
+  .flow-line,
+  .flow-dots {
     animation: none;
   }
 }

@@ -26,7 +26,15 @@ export type DeviceStatus = {
 
 export type LiveResponse = { reading: Reading | null; fresh: boolean; device: DeviceStatus };
 
-export type Energy = { import: number | null; export: number | null; gas: number | null };
+export type Energy = {
+  import: number | null;
+  export: number | null;
+  gas: number | null;
+  /** Present when solar panels are connected. */
+  solar?: number | null;
+  /** Import − export + solar: what the house actually used. */
+  consumption?: number | null;
+};
 
 export type Summary = {
   day_start: number;
@@ -38,6 +46,8 @@ export type Summary = {
     export: number | null;
     gas: number | null;
     cost: number | null;
+    solar?: number | null;
+    consumption?: number | null;
   };
   cost_today: Cost | null;
   rate_now: RateNow | null;
@@ -70,9 +80,11 @@ export type Totals = {
   gas: number | null;
   peak_import_w: number | null;
   peak_export_w: number | null;
+  solar?: number | null;
+  consumption?: number | null;
 };
 
-/** [bucket start, import kWh, export kWh, gas m³, cost €, feed-in costs €] */
+/** [bucket start, import kWh, export kWh, gas m³, cost €, feed-in costs €, solar kWh, consumption kWh] */
 export type Bar = [
   number,
   number | null,
@@ -80,6 +92,8 @@ export type Bar = [
   number | null,
   number | null,
   number | null,
+  (number | null)?,
+  (number | null)?,
 ];
 
 export type FeedInSummary = {

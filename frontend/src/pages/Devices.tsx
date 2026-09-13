@@ -81,7 +81,7 @@ export function DevicesPage() {
         {inverters.length === 0 && (
           <Link to="/settings/solar">
             <Card className="flex items-center gap-3 p-5 transition-colors hover:bg-muted-surface/50 sm:p-6">
-              <Sun className="size-5 text-export" strokeWidth={1.75} />
+              <Sun className="size-5 text-solar" strokeWidth={1.75} />
               <div>
                 <div className="text-sm font-medium">{t("solar.setup")}</div>
                 <div className="text-[13px] text-muted">{t("solar.settingsDescription")}</div>
@@ -188,7 +188,7 @@ function InverterCard({ inverter }: { inverter: Inverter }) {
       <CardHeader
         title={
           <span className="flex items-center gap-2.5">
-            <Sun className="size-[18px] text-export" strokeWidth={1.75} />
+            <Sun className="size-[18px] text-solar" strokeWidth={1.75} />
             {inverter.display_name}
           </span>
         }

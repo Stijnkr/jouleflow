@@ -131,8 +131,8 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="flex flex-col gap-4 border-b border-border px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8 sm:py-6">
-      <div>
+    <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border px-5 py-5 sm:px-8 sm:py-6">
+      <div className="min-w-[12rem] flex-1">
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {subtitle && <p className="tabular mt-1 text-sm text-muted">{subtitle}</p>}
       </div>

@@ -60,7 +60,7 @@ def test_energy_comes_from_the_lifetime_counter(manager):
     manager.rollup(hour + 7200)
     rows = manager.storage._db.execute("SELECT energy FROM solar_agg_1h ORDER BY ts").fetchall()
     assert [round(r["energy"], 2) for r in rows] == [1.5, 0.4]
-    assert manager.energy_between(hour, hour + 7200)["mic"] == pytest.approx(1.9)
+    assert manager.energy_between(hour, hour + 7200)["mic"] == pytest.approx(1.9, abs=0.01)
 
 
 def test_energy_produced_while_unreachable_is_not_lost(manager):
@@ -69,15 +69,24 @@ def test_energy_produced_while_unreachable_is_not_lost(manager):
     # Nothing stored for two hours, then the counter has moved on by 3 kWh.
     insert(manager, hour + 3 * 3600, 600, power=1000, total_from=2003.1, total_to=2003.2)
     manager.rollup(hour + 4 * 3600)
-    assert manager.energy_between(hour, hour + 4 * 3600)["mic"] == pytest.approx(3.2)
+    assert manager.energy_between(hour, hour + 4 * 3600)["mic"] == pytest.approx(3.2, abs=0.02)
 
 
 def test_recent_samples_count_before_they_are_rolled_up(manager):
     hour = 1_789_300_800
     insert(manager, hour, 3599, power=1000, total_from=2000.0, total_to=2001.0)
     manager.rollup(hour + 3600)
-    insert(manager, hour + 3600, 900, power=1000, total_from=2001.0, total_to=2001.3)
-    assert manager.energy_between(hour, hour + 4500)["mic"] == pytest.approx(1.3)
+    insert(manager, hour + 3600, 900, power=1000, total_from=2001.0, total_to=2001.25)
+    assert manager.energy_between(hour, hour + 4500)["mic"] == pytest.approx(1.25, abs=0.01)
+
+
+def test_hourly_energy_follows_power_within_one_counter_step(manager):
+    hour = 1_789_300_800
+    # 1234 W for an hour; the 0.1 kWh counter only shows 1.2.
+    insert(manager, hour, 3599, power=1234, total_from=2000.0, total_to=2001.2)
+    manager.rollup(hour + 3600)
+    energy = manager.storage.query_one("SELECT energy FROM solar_agg_1h")["energy"]
+    assert energy == pytest.approx(1.234, abs=0.005)
 
 
 def test_counter_reset_does_not_create_negative_or_huge_energy(manager):
@@ -98,3 +107,59 @@ def test_settings_are_stored_and_reload(tmp_path):
     assert again.settings.inverters == [inverter]
     assert again.public_states()[0]["display_name"] == "Zonnepanelen"
     storage.close()
+
+
+def test_average_into_buckets_counts_missing_slots_as_zero_after_solar_started():
+    from jouleflow.solar import average_into_buckets
+
+    points = [(1000, 600.0), (1010, 1200.0)]  # two 10 s slots, then the inverter sleeps
+    # A 60 s bucket: (600 + 1200) / 6 slots.
+    assert average_into_buckets(points, 10, [1000], 60, since=1000) == [300.0]
+    # 5 s buckets take the value of the slot they fall in, and 0 outside any slot.
+    assert average_into_buckets(points, 10, [1005, 1015, 1025], 5, since=1000) == [
+        600.0,
+        1200.0,
+        0.0,
+    ]
+    # A short gap between readings is bridged; a long one (night) is not.
+    bridged = [(1000, 1000.0), (1060, 1600.0)]
+    assert average_into_buckets(bridged, 10, [1030], 5, since=1000) == [1300.0]
+    night = [(1000, 1000.0), (5000, 0.0)]
+    assert average_into_buckets(night, 10, [3000], 5, since=1000) == [0.0]
+    # Before the panels were connected there is no solar value at all.
+    assert average_into_buckets(points, 10, [900], 60, since=1000) == [None]
+
+
+def test_series_summary_and_history_gain_solar_and_consumption(manager):
+    from datetime import date
+
+    from jouleflow import queries
+    from tests.test_storage import local_ts, make_readings
+
+    storage = manager.storage
+    day = local_ts(2026, 9, 13)
+    noon = day + 12 * 3600
+    # The house draws 300 W from the grid while the panels make 1200 W.
+    storage.insert_samples(make_readings(noon, 600, import_w=300, counters=(100.0, 50.0)))
+    insert(manager, noon, 590, power=1200, total_from=2000.0, total_to=2000.2)
+    now = noon + 600
+    storage.rollup_all(now)
+
+    series = manager.add_to_series(queries.live_series(storage, "hour", now))
+    fields = series["fields"]
+    point = series["points"][10]
+    assert point[fields.index("solar_avg")] == 1200
+    assert point[fields.index("home_avg")] == 1500
+
+    summary = manager.add_to_summary(queries.today_summary(storage, now), now)
+    assert summary["today"]["solar"] == pytest.approx(0.2, abs=0.01)
+    assert summary["today"]["consumption"] == pytest.approx(
+        summary["today"]["import"] + summary["today"]["solar"], abs=1e-3
+    )
+
+    history = manager.add_to_history(queries.history(storage, "day", date(2026, 9, 13), now=now))
+    assert history["totals"]["solar"] == pytest.approx(0.2, abs=0.01)
+    noon_bar = history["bars"][12]
+    assert noon_bar[6] == pytest.approx(0.2, abs=0.01)
+    assert noon_bar[7] == pytest.approx(noon_bar[1] + noon_bar[6], abs=1e-3)
+    assert history["bars"][3][6] is None

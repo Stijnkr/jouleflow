@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Moon, Sun } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Moon, Sun } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { EnergyFlow } from "../components/EnergyFlow";
 import { MetricChart } from "../components/MetricChart";
 import { PlugSwitch } from "../components/PlugSwitch";
-import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
+import { Card, CardHeader, cn, IconButton, PageHeader, Segmented } from "../components/ui";
 import { api, type PowerRange, type Reading, type Series, type Summary } from "../lib/api";
-import { energy, euro, kw, longDate, num, power, powerText, time } from "../lib/format";
+import { energy, euro, kw, longDate, num, powerText, time } from "../lib/format";
 import { useLive, useNow } from "../lib/live";
 import { DEFAULT_P1_SELECTION, P1_METRICS, readingToPoint } from "../lib/metrics";
 import { t } from "../lib/i18n";
@@ -29,11 +30,20 @@ const RANGE_LABEL = {
   week: "live.rangeWeek",
 } as const;
 
+function useSolarNow() {
+  const { data } = useQuery({ queryKey: ["inverters"], queryFn: api.inverters, refetchInterval: 5000 });
+  const inverters = data?.inverters ?? [];
+  return {
+    hasSolar: inverters.length > 0,
+    solarW: inverters.reduce((sum, i) => sum + (i.fresh ? (i.power ?? 0) : 0), 0),
+  };
+}
+
 export function LivePage() {
   const { reading } = useLive();
   const { resolved, toggle } = useTheme();
-  const [range, setRange] = useState<PowerRange>("hour");
   const now = useNow(5000);
+  const { hasSolar, solarW } = useSolarNow();
 
   const summary = useQuery({
     queryKey: ["summary"],
@@ -42,7 +52,6 @@ export function LivePage() {
   });
   const live = useQuery({ queryKey: ["live"], queryFn: api.live, refetchInterval: 30_000 });
   const current = reading ?? live.data?.reading ?? null;
-  const hasGas = Boolean(live.data?.device.details.has_gas);
 
   return (
     <>
@@ -55,206 +64,166 @@ export function LivePage() {
           </>
         }
         actions={
-          <>
-            <Segmented
-              value={range}
-              onChange={setRange}
-              options={[
-                { value: "15m", label: t("range.15m") },
-                { value: "hour", label: t("range.hour") },
-                { value: "6h", label: t("range.6h") },
-                { value: "day", label: t("range.day") },
-                { value: "week", label: t("range.week") },
-              ]}
-            />
-            <IconButton label={t("common.toggleTheme")} onClick={toggle}>
-              {resolved === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
-            </IconButton>
-          </>
+          <IconButton label={t("common.toggleTheme")} onClick={toggle}>
+            {resolved === "dark" ? <Moon className="size-4" /> : <Sun className="size-4" />}
+          </IconButton>
         }
       />
 
       <div className="mx-auto flex max-w-[1400px] flex-col gap-4 p-4 sm:gap-6 sm:p-8">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4">
-          <NowCard reading={current} summary={summary.data} />
-          <ImportedCard summary={summary.data} />
-          <ExportedCard summary={summary.data} />
-          {summary.data?.cost_today ? (
-            <CostCard summary={summary.data} />
-          ) : hasGas ? (
-            <GasCard summary={summary.data} />
-          ) : (
-            <NetCard summary={summary.data} />
-          )}
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(320px,2fr)]">
+          <Card className="px-5 pt-6 pb-5 sm:px-8 sm:pt-8 sm:pb-6">
+            <EnergyFlow netW={current?.power_net ?? null} solarW={solarW} hasSolar={hasSolar}>
+              <PlugConsumers />
+            </EnergyFlow>
+          </Card>
+          <TodayCard summary={summary.data} hasSolar={hasSolar} />
         </div>
 
-        <MeasurementsCard range={range} />
+        <MeasurementsCard solarW={hasSolar ? solarW : null} />
 
-        <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-[3fr_2fr]">
-          <EnergyFlowCard reading={current} />
-          <PhasesCard reading={current} />
-        </div>
+        <PhasesCard reading={current} />
       </div>
     </>
   );
 }
 
-// ---------------------------------------------------------------------------- stat cards
+// ---------------------------------------------------------------------------- today
 
-function StatCard({
-  label,
-  icon,
-  value,
-  unit,
-  valueClass,
-  footer,
+/** A part-to-whole bar with its parts listed underneath. */
+function Split({
+  total,
+  parts,
 }: {
-  label: string;
-  icon?: React.ReactNode;
-  value: string;
-  unit: string;
-  valueClass?: string;
-  footer: React.ReactNode;
+  total: number | null | undefined;
+  parts: { label: string; value: number | null | undefined; color: string }[];
 }) {
+  const sum = parts.reduce((s, p) => s + Math.max(p.value ?? 0, 0), 0);
   return (
-    <Card className="p-5 sm:p-6">
-      <div className="flex items-center gap-1.5 text-sm text-muted">
-        {icon}
-        {label}
+    <>
+      <div className="mt-3 flex h-2.5 gap-0.5 overflow-hidden rounded-full bg-muted-surface">
+        {total != null &&
+          sum > 0 &&
+          parts.map((p) =>
+            (p.value ?? 0) > 0 ? (
+              <div
+                key={p.label}
+                className={cn("h-full transition-[width] duration-700 first:rounded-l-full last:rounded-r-full", p.color)}
+                style={{ width: `${((p.value ?? 0) / sum) * 100}%` }}
+              />
+            ) : null,
+          )}
       </div>
-      <Value className={cn("mt-3", valueClass)} value={value} unit={unit} />
-      <div className="tabular mt-3 truncate text-sm text-muted">{footer}</div>
-    </Card>
+      <dl className="mt-3 flex flex-col gap-1.5 text-sm">
+        {parts.map((p) => (
+          <div key={p.label} className="flex items-center gap-2">
+            <span className={cn("size-2.5 shrink-0 rounded-sm", p.color)} />
+            <dt className="text-muted">{p.label}</dt>
+            <dd className="tabular ml-auto font-medium">{energy(p.value)} kWh</dd>
+          </div>
+        ))}
+      </dl>
+    </>
+  );
+}
+
+function Headline({ label, value, unit }: { label: string; value: string; unit: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <h3 className="text-sm font-medium text-muted">{label}</h3>
+      <div className="tabular flex items-baseline gap-1">
+        <span className="text-[28px] leading-none font-semibold tracking-tight">{value}</span>
+        {unit && <span className="text-sm text-muted">{unit}</span>}
+      </div>
+    </div>
   );
 }
 
 function Change({ pct, lowerIsGood }: { pct: number | null | undefined; lowerIsGood: boolean }) {
-  if (pct == null) return <>{t("change.noYesterday")}</>;
+  if (pct == null) return null;
   const lower = pct < 0;
-  const good = lower === lowerIsGood;
   return (
-    <span className={good ? "text-export" : "text-import"}>
+    <p className={cn("mt-2 text-[13px]", lower === lowerIsGood ? "text-export" : "text-muted")}>
       {t(lower ? "change.lessThanYesterday" : "change.moreThanYesterday", { pct: Math.abs(Math.round(pct)) })}
-    </span>
-  );
-}
-
-function NowCard({ reading, summary }: { reading: Reading | null; summary?: Summary }) {
-  const exporting = reading != null && reading.power_net < 0;
-  const [value, unit] = power(reading?.power_net);
-  const peak = summary?.peak_import;
-  return (
-    <StatCard
-      label={exporting ? t("live.exportingNow") : t("live.drawingNow")}
-      icon={
-        exporting ? (
-          <ArrowUp className="size-4 text-export" />
-        ) : (
-          <ArrowDown className="size-4 text-import" />
-        )
-      }
-      value={value}
-      unit={unit}
-      valueClass={exporting ? "text-export" : "text-import"}
-      footer={
-        peak
-          ? t("live.peakToday", { power: powerText(peak.w), time: time(peak.ts) })
-          : t("live.waitingToday")
-      }
-    />
-  );
-}
-
-function ImportedCard({ summary }: { summary?: Summary }) {
-  return (
-    <StatCard
-      label={t("live.importedToday")}
-      value={energy(summary?.today.import)}
-      unit="kWh"
-      footer={<Change pct={summary?.change_pct.import} lowerIsGood />}
-    />
-  );
-}
-
-function ExportedCard({ summary }: { summary?: Summary }) {
-  const w = summary?.export_window;
-  return (
-    <StatCard
-      label={t("live.exportedToday")}
-      value={energy(summary?.today.export)}
-      unit="kWh"
-      footer={
-        summary?.cost_today?.export_cost ? (
-          <span className="text-import">
-            {t("live.feedInCostToday", { amount: euro(summary.cost_today.export_cost) })}
-          </span>
-        ) : w ? (
-          t("live.sentBack", { start: time(w.start), end: time(w.end) })
-        ) : (
-          t("live.nothingSentBack")
-        )
-      }
-    />
-  );
-}
-
-function GasCard({ summary }: { summary?: Summary }) {
-  return (
-    <StatCard
-      label={t("live.gasToday")}
-      value={energy(summary?.today.gas)}
-      unit="m³"
-      footer={<Change pct={summary?.change_pct.gas} lowerIsGood />}
-    />
+    </p>
   );
 }
 
 const RATE_LABEL = { normal: "rate.normal", low: "rate.low", single: "rate.single" } as const;
 
-function CostCard({ summary }: { summary: Summary }) {
-  const cost = summary.cost_today!;
-  const rate = summary.rate_now;
-  return (
-    <StatCard
-      label={t("live.costToday")}
-      value={euro(cost.total)}
-      unit=""
-      valueClass={cost.total < 0 ? "text-export" : undefined}
-      footer={
-        rate ? (
-          <span
-            title={t("live.costBreakdown", {
-              energy: euro(cost.import - cost.export_credit + cost.export_cost),
-              fixed: euro(cost.fixed),
-            })}
-          >
-            {t("live.rateNow", { price: euro(rate.import_price, 4), rate: t(RATE_LABEL[rate.rate]) })}
-          </span>
-        ) : (
-          t("live.fixedIncluded", { amount: euro(cost.fixed) })
-        )
-      }
-    />
-  );
-}
+function TodayCard({ summary, hasSolar }: { summary?: Summary; hasSolar: boolean }) {
+  const today = summary?.today;
+  const solar = hasSolar ? today?.solar : null;
+  const withSolar = solar != null;
+  const selfUsed = withSolar ? Math.max(solar - (today?.export ?? 0), 0) : null;
+  const used = today?.consumption ?? null;
+  const cost = summary?.cost_today;
+  const rate = summary?.rate_now;
 
-function NetCard({ summary }: { summary?: Summary }) {
-  const imp = summary?.today.import;
-  const exp = summary?.today.export;
-  const net = imp == null ? null : imp - (exp ?? 0);
   return (
-    <StatCard
-      label={t("live.netToday")}
-      value={net == null ? "—" : energy(Math.abs(net))}
-      unit="kWh"
-      footer={
-        net == null
-          ? t("live.netHint")
-          : net >= 0
-            ? t("live.netImport")
-            : t("live.netExport")
-      }
-    />
+    <Card className="flex flex-col">
+      <CardHeader title={t("today.title")} />
+      <div className="flex flex-1 flex-col divide-y divide-border px-5 sm:px-6">
+        {withSolar ? (
+          <>
+            <section className="py-5">
+              <Headline label={t("today.used")} value={energy(used)} unit="kWh" />
+              <Split
+                total={used}
+                parts={[
+                  { label: t("today.fromSolar"), value: selfUsed, color: "bg-solar" },
+                  { label: t("today.fromGrid"), value: today?.import, color: "bg-grid" },
+                ]}
+              />
+              {used != null && used > 0 && selfUsed != null && (
+                <p className="mt-2 text-[13px] text-muted">
+                  {t("today.selfSufficient", { pct: Math.round((selfUsed / used) * 100) })}
+                </p>
+              )}
+            </section>
+            <section className="py-5">
+              <Headline label={t("today.produced")} value={energy(solar)} unit="kWh" />
+              <Split
+                total={solar}
+                parts={[
+                  { label: t("today.selfUsed"), value: selfUsed, color: "bg-solar" },
+                  { label: t("today.exported"), value: today?.export, color: "bg-export" },
+                ]}
+              />
+              <Change pct={summary?.change_pct.solar} lowerIsGood={false} />
+            </section>
+          </>
+        ) : (
+          <section className="py-5">
+            <Headline label={t("today.imported")} value={energy(today?.import)} unit="kWh" />
+            <Change pct={summary?.change_pct.import} lowerIsGood />
+            <div className="mt-5">
+              <Headline label={t("today.exported")} value={energy(today?.export)} unit="kWh" />
+            </div>
+            {today?.gas != null && today.gas > 0 && (
+              <div className="mt-5">
+                <Headline label={t("live.gasToday")} value={energy(today.gas)} unit="m³" />
+              </div>
+            )}
+          </section>
+        )}
+        {cost && (
+          <section className="py-5">
+            <Headline label={t("today.cost")} value={euro(cost.total)} unit="" />
+            <p className="tabular mt-2 text-[13px] text-muted">
+              {rate
+                ? t("live.rateNow", { price: euro(rate.import_price, 4), rate: t(RATE_LABEL[rate.rate]) })
+                : t("live.fixedIncluded", { amount: euro(cost.fixed) })}
+            </p>
+            {cost.export_cost > 0 && (
+              <p className="tabular mt-1 text-[13px] text-muted">
+                {t("live.feedInCostToday", { amount: euro(cost.export_cost) })}
+              </p>
+            )}
+          </section>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -262,7 +231,8 @@ function NetCard({ summary }: { summary?: Summary }) {
 
 const LIVE_BUCKET_LABEL = { "15m": "time", hour: "time", "6h": "time", day: "time", week: "datetime" } as const;
 
-function MeasurementsCard({ range }: { range: PowerRange }) {
+function MeasurementsCard({ solarW }: { solarW: number | null }) {
+  const [range, setRange] = useState<PowerRange>("hour");
   const { subscribe } = useLive();
   const query = useQuery({
     queryKey: ["series", range],
@@ -271,6 +241,8 @@ function MeasurementsCard({ range }: { range: PowerRange }) {
   });
   const [data, setData] = useState<Series | undefined>();
   const [end, setEnd] = useState(() => Math.floor(Date.now() / 1000));
+  const solarRef = useRef(solarW);
+  solarRef.current = solarW;
 
   useEffect(() => {
     if (query.data) {
@@ -291,7 +263,7 @@ function MeasurementsCard({ range }: { range: PowerRange }) {
         if (last && r.ts < (last[0] as number) + prev.bucket_seconds) return prev;
         const cutoff = r.ts - RANGE_SECONDS[range];
         const points = prev.points.filter((p) => (p[0] as number) >= cutoff);
-        points.push(readingToPoint(r, prev.fields));
+        points.push(readingToPoint(r, prev.fields, last, solarRef.current));
         return { ...prev, points };
       });
     });
@@ -299,10 +271,24 @@ function MeasurementsCard({ range }: { range: PowerRange }) {
 
   return (
     <Card>
-      <CardHeader
-        title={`${t("status.p1")} · ${t("metrics.title")}`}
-        description={t("metrics.liveDescription", { range: t(RANGE_LABEL[range]) })}
-      />
+      <div className="flex flex-col gap-3 px-5 pt-5 sm:flex-row sm:items-start sm:justify-between sm:px-6 sm:pt-6">
+        <div className="min-w-0">
+          <h2 className="text-[15px] font-semibold tracking-tight">{t("metrics.powerTitle")}</h2>
+          <p className="mt-1 text-sm text-muted">{t(RANGE_LABEL[range])}</p>
+        </div>
+        <Segmented
+          value={range}
+          onChange={setRange}
+          size="sm"
+          options={[
+            { value: "15m", label: t("range.15m") },
+            { value: "hour", label: t("range.hour") },
+            { value: "6h", label: t("range.6h") },
+            { value: "day", label: t("range.day") },
+            { value: "week", label: t("range.week") },
+          ]}
+        />
+      </div>
       <MetricChart
         data={data}
         catalog={P1_METRICS}
@@ -320,105 +306,6 @@ function MeasurementsCard({ range }: { range: PowerRange }) {
   );
 }
 
-// ---------------------------------------------------------------------------- energy flow
-
-function FlowNode({ label, value, compact }: { label: string; value: string; compact?: boolean }) {
-  return (
-    <div
-      className={cn(
-        "shrink-0 rounded-lg border border-border py-3 sm:w-36 sm:px-5 sm:py-4",
-        compact ? "w-[5.5rem] px-3" : "w-28 px-4",
-      )}
-    >
-      <div className="truncate text-sm text-muted">{label}</div>
-      <div className={cn("tabular mt-1 font-semibold sm:text-xl", compact ? "text-base" : "text-lg")}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-/** Animated dashed line; energy moves towards the right end when `toRight`. */
-function FlowLine({ active, color, toRight }: { active: boolean; color: string; toRight: boolean }) {
-  return (
-    <svg className="h-6 min-w-0 flex-1" preserveAspectRatio="none" viewBox="0 0 100 24">
-      <line
-        x1="2"
-        y1="12"
-        x2="94"
-        y2="12"
-        stroke={active ? color : "var(--border)"}
-        strokeWidth="2"
-        strokeDasharray="8 6"
-        vectorEffect="non-scaling-stroke"
-        className={cn(active && "flow-line", !toRight && "reverse")}
-      />
-      {active && (
-        <path
-          d={toRight ? "M94 6 L100 12 L94 18" : "M6 6 L0 12 L6 18"}
-          fill="none"
-          stroke={color}
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-          strokeLinecap="round"
-        />
-      )}
-    </svg>
-  );
-}
-
-function EnergyFlowCard({ reading }: { reading: Reading | null }) {
-  const { data: solarData } = useQuery({ queryKey: ["inverters"], queryFn: api.inverters, refetchInterval: 5000 });
-  const inverters = solarData?.inverters ?? [];
-  const hasSolar = inverters.length > 0;
-  const solarW = inverters.reduce((sum, i) => sum + (i.fresh ? (i.power ?? 0) : 0), 0);
-
-  const net = reading?.power_net ?? 0;
-  const exporting = net < 0;
-  const idle = reading == null || Math.abs(net) < 5;
-  const color = exporting ? "var(--export)" : "var(--import)";
-  const gridValue = reading ? `${kw(Math.abs(net))} kW` : "—";
-  // What the house uses: whatever comes from the grid plus what the panels produce.
-  const homeValue = reading ? `${kw(Math.max(net + solarW, 0))} kW` : "—";
-
-  return (
-    <Card>
-      <CardHeader
-        title={t("flow.title")}
-        description={
-          idle ? t("flow.idle") : exporting ? t("flow.exporting") : t("flow.importing")
-        }
-      />
-      <div className="px-5 pt-6 pb-5 sm:px-6 sm:pb-6">
-        {hasSolar ? (
-          <div className="flex items-center gap-2 sm:gap-4">
-            <FlowNode compact label={t("flow.solar")} value={`${kw(solarW)} kW`} />
-            <FlowLine active={solarW >= 5} color="var(--export)" toRight />
-            <FlowNode compact label={t("flow.home")} value={homeValue} />
-            <FlowLine active={!idle} color={color} toRight={exporting} />
-            <FlowNode compact label={t("flow.grid")} value={gridValue} />
-          </div>
-        ) : (
-          <div className="flex items-center gap-3 sm:gap-5">
-            <FlowNode label={t("flow.grid")} value={gridValue} />
-            <FlowLine active={!idle} color={color} toRight={!exporting} />
-            <FlowNode label={t("flow.home")} value={homeValue} />
-          </div>
-        )}
-        <PlugConsumers />
-        <div className="mt-6 flex flex-wrap items-center gap-2 text-sm text-muted">
-          {[...(hasSolar ? [] : [t("flow.solar")]), t("flow.battery"), t("flow.ev")].map((d) => (
-            <span key={d} className="rounded-full border border-dashed border-border px-3 py-1.5">
-              {d}
-            </span>
-          ))}
-          <span className="ml-1">{t("flow.appear")}</span>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 // ---------------------------------------------------------------------------- phases
 
 // A typical Dutch 3×25 A connection: 25 A × 230 V per phase.
@@ -429,7 +316,7 @@ function PhasesCard({ reading }: { reading: Reading | null }) {
   return (
     <Card>
       <CardHeader title={t("phases.title")} description={t("phases.description")} />
-      <div className="flex flex-col gap-5 px-5 pt-6 pb-6 sm:px-6">
+      <div className="grid grid-cols-1 gap-5 px-5 pt-5 pb-6 sm:grid-cols-3 sm:gap-8 sm:px-6">
         {phases.length === 0 && <p className="text-sm text-muted">{t("phases.none")}</p>}
         {phases.map((p, i) => {
           const w = p.power ?? 0;
@@ -439,7 +326,7 @@ function PhasesCard({ reading }: { reading: Reading | null }) {
             <div key={i}>
               <div className="flex items-baseline justify-between gap-3 text-sm">
                 <span className="font-medium text-muted">L{i + 1}</span>
-                <span className={cn("tabular whitespace-nowrap font-semibold", exporting && "text-export")}>
+                <span className="tabular font-semibold whitespace-nowrap">
                   {exporting && "−"}
                   {kw(Math.abs(w))} kW
                 </span>
@@ -448,7 +335,7 @@ function PhasesCard({ reading }: { reading: Reading | null }) {
                 <div
                   className={cn(
                     "h-full rounded-full transition-[width] duration-700",
-                    exporting ? "bg-export" : "bg-import",
+                    exporting ? "bg-export" : "bg-grid",
                   )}
                   style={{ width: `${Math.max(pct, w === 0 ? 0 : 1.5)}%` }}
                 />
@@ -477,11 +364,16 @@ function PlugConsumers() {
   if (!plugs.length) return null;
   return (
     <div className="mt-6 border-t border-border pt-4">
-      <div className="mb-2 text-xs font-medium text-subtle">{t("plugs.consumers")}</div>
+      <div className="mb-1 text-[13px] font-medium text-muted">{t("plugs.consumers")}</div>
       <div className="flex flex-col divide-y divide-border">
         {plugs.map((plug) => (
           <div key={plug.id} className="flex items-center gap-3 py-2.5 text-sm">
-            <span className={cn("size-2 shrink-0 rounded-full", plug.connected ? (plug.is_on ? "bg-export" : "bg-subtle") : "bg-import")} />
+            <span
+              className={cn(
+                "size-2 shrink-0 rounded-full",
+                plug.connected ? (plug.is_on ? "bg-export" : "bg-subtle") : "bg-import",
+              )}
+            />
             <span className="min-w-0 flex-1 truncate font-medium">{plug.display_name}</span>
             <span className="tabular text-muted">
               {plug.connected

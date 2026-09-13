@@ -85,12 +85,19 @@ export function HistoryPage() {
         : period === "year"
           ? `${monthName(ts, "long")}`
           : `${weekday(ts)} ${shortDate(ts)}`;
-    return energyBarsOption(h.bars, label, tooltipLabel);
+    return energyBarsOption(h.bars, label, tooltipLabel, h.totals.solar != null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [h, period, resolved]);
 
 
   const empty = h != null && h.totals.import == null;
+  const withSolar = h?.totals.solar != null;
+  const selfUsedPct =
+    h?.totals.solar ? Math.round((Math.max(h.totals.solar - (h.totals.export ?? 0), 0) / h.totals.solar) * 100) : null;
+  const selfSufficient =
+    h?.totals.consumption && h.totals.solar != null
+      ? Math.round((Math.max(h.totals.solar - (h.totals.export ?? 0), 0) / h.totals.consumption) * 100)
+      : null;
 
   return (
     <>
@@ -131,70 +138,118 @@ export function HistoryPage() {
           query.isPlaceholderData && "opacity-60",
         )}
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4">
-          <TotalCard
-            label={t("history.imported")}
-            value={h?.totals.import}
-            previous={h?.previous.import}
-            period={period}
-            lowerIsGood
-            extra={
-              h?.totals.import_low != null
-                ? t("history.lowNormal", { low: energy(h.totals.import_low, 1), normal: energy(h.totals.import_normal, 1) })
-                : undefined
-            }
-          />
-          <TotalCard
-            label={t("history.exported")}
-            value={h?.totals.export}
-            previous={h?.previous.export}
-            period={period}
-            lowerIsGood={false}
-          />
-          {h?.totals.cost ? (
-            <CostCard cost={h.totals.cost} previous={h.previous.cost} period={period} />
-          ) : (
+        {withSolar && h ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4">
             <TotalCard
-              label={t("history.netUsage")}
-              value={h?.totals.net}
-              previous={h?.previous.net}
+              label={t("history.used")}
+              value={h.totals.consumption}
+              previous={h.previous.consumption}
               period={period}
               lowerIsGood
+              extra={selfSufficient != null ? t("history.selfSufficient", { pct: selfSufficient }) : undefined}
             />
-          )}
-          <Card className="p-5 sm:p-6">
-            <div className="text-sm text-muted">{t("history.peakPower")}</div>
-            <Value
-              className="mt-3"
-              value={kw(h?.totals.peak_import_w)}
-              unit="kW"
+            <TotalCard
+              label={t("history.produced")}
+              value={h.totals.solar}
+              previous={h.previous.solar}
+              period={period}
+              lowerIsGood={false}
+              extra={selfUsedPct != null ? t("history.selfUsedPct", { pct: selfUsedPct }) : undefined}
             />
-            <div className="tabular mt-3 truncate text-sm text-muted">
-              {h?.totals.peak_export_w
-                ? t("history.exportPeak", { power: powerText(h.totals.peak_export_w) })
-                : t("history.highestImport")}
-            </div>
-          </Card>
-        </div>
+            <Card className="p-5 sm:p-6">
+              <div className="text-sm text-muted">{t("history.gridExchange")}</div>
+              <dl className="mt-4 flex flex-col gap-2.5">
+                <div className="flex items-center gap-2.5">
+                  <span className="size-2.5 rounded-sm bg-grid" />
+                  <dt className="text-sm text-muted">{t("chart.imported")}</dt>
+                  <dd className="tabular ml-auto text-xl font-semibold tracking-tight">
+                    {energy(h.totals.import)} <span className="text-sm font-normal text-muted">kWh</span>
+                  </dd>
+                </div>
+                <div className="flex items-center gap-2.5">
+                  <span className="size-2.5 rounded-sm bg-export" />
+                  <dt className="text-sm text-muted">{t("chart.exported")}</dt>
+                  <dd className="tabular ml-auto text-xl font-semibold tracking-tight">
+                    {energy(h.totals.export)} <span className="text-sm font-normal text-muted">kWh</span>
+                  </dd>
+                </div>
+              </dl>
+            </Card>
+            {h.totals.cost ? (
+              <CostCard cost={h.totals.cost} previous={h.previous.cost} period={period} />
+            ) : (
+              <PeakCard h={h} />
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4">
+            <TotalCard
+              label={t("history.imported")}
+              value={h?.totals.import}
+              previous={h?.previous.import}
+              period={period}
+              lowerIsGood
+              extra={
+                h?.totals.import_low != null
+                  ? t("history.lowNormal", { low: energy(h.totals.import_low, 1), normal: energy(h.totals.import_normal, 1) })
+                  : undefined
+              }
+            />
+            <TotalCard
+              label={t("history.exported")}
+              value={h?.totals.export}
+              previous={h?.previous.export}
+              period={period}
+              lowerIsGood={false}
+            />
+            {h?.totals.cost ? (
+              <CostCard cost={h.totals.cost} previous={h.previous.cost} period={period} />
+            ) : (
+              <TotalCard
+                label={t("history.netUsage")}
+                value={h?.totals.net}
+                previous={h?.previous.net}
+                period={period}
+                lowerIsGood
+              />
+            )}
+            <PeakCard h={h} />
+          </div>
+        )}
 
         <Card>
           <CardHeader
             title={t("history.energy")}
             description={
-              period === "day"
-                ? t("history.perHour")
-                : period === "year"
-                  ? t("history.perMonth")
-                  : t("history.perDay")
+              withSolar
+                ? period === "day"
+                  ? t("history.usedPerHour")
+                  : period === "year"
+                    ? t("history.usedPerMonth")
+                    : t("history.usedPerDay")
+                : period === "day"
+                  ? t("history.perHour")
+                  : period === "year"
+                    ? t("history.perMonth")
+                    : t("history.perDay")
             }
             action={
               <div className="hidden gap-4 text-sm text-muted sm:flex">
-                <span className="flex items-center gap-2">
-                  <span className="size-2.5 rounded-sm bg-import" /> {t("chart.imported")}
-                </span>
-                <span className="flex items-center gap-2">
-                  <span className="size-2.5 rounded-sm bg-export" /> {t("chart.exported")}
-                </span>
+                {(withSolar
+                  ? [
+                      ["bg-solar", t("chart.fromSolar")],
+                      ["bg-grid", t("chart.fromGrid")],
+                      ["bg-export", t("chart.exported")],
+                    ]
+                  : [
+                      ["bg-grid", t("chart.imported")],
+                      ["bg-export", t("chart.exported")],
+                    ]
+                ).map(([color, label]) => (
+                  <span key={label} className="flex items-center gap-2">
+                    <span className={cn("size-2.5 rounded-sm", color)} /> {label}
+                  </span>
+                ))}
               </div>
             }
           />
@@ -210,14 +265,26 @@ export function HistoryPage() {
 
         {h?.totals.feed_in && <FeedInCard summary={h.totals.feed_in} />}
 
-        <SolarCard period={period} anchor={isoDate(anchor)} exported={h?.totals.export ?? null} />
-
         <PlugsCard period={period} anchor={isoDate(anchor)} />
 
         <MeasurementsCard period={period} anchor={isoDate(anchor)} />
 
       </div>
     </>
+  );
+}
+
+function PeakCard({ h }: { h: History | undefined }) {
+  return (
+    <Card className="p-5 sm:p-6">
+      <div className="text-sm text-muted">{t("history.peakPower")}</div>
+      <Value className="mt-3" value={kw(h?.totals.peak_import_w)} unit="kW" />
+      <div className="tabular mt-3 text-sm text-muted">
+        {h?.totals.peak_export_w
+          ? t("history.exportPeak", { power: powerText(h.totals.peak_export_w) })
+          : t("history.highestImport")}
+      </div>
+    </Card>
   );
 }
 
@@ -235,7 +302,7 @@ function CostCard({ cost, previous, period }: { cost: Cost; previous: Cost | nul
     <Card className="p-5 sm:p-6">
       <div className="text-sm text-muted">{t("history.costs")}</div>
       <Value className="mt-3" value={euro(cost.total)} />
-      <div className="tabular mt-3 truncate text-sm text-muted">{comparison}</div>
+      <div className="tabular mt-3 text-sm text-muted">{comparison}</div>
       {previous && previous.total > 0 && (
         <div className="tabular mt-1 truncate text-xs text-subtle">
           {breakdown}
@@ -274,7 +341,7 @@ function TotalCard({
     <Card className="p-5 sm:p-6">
       <div className="text-sm text-muted">{label}</div>
       <Value className="mt-3" value={energy(value)} unit="kWh" />
-      <div className="tabular mt-3 truncate text-sm text-muted">{footer}</div>
+      <div className="tabular mt-3 text-sm text-muted">{footer}</div>
       {extra && value != null && previous ? (
         <div className="tabular mt-1 truncate text-xs text-subtle">{extra}</div>
       ) : null}
@@ -302,7 +369,7 @@ function MeasurementsCard({ period, anchor }: { period: Period; anchor: string }
   return (
     <Card>
       <CardHeader
-        title={`${t("status.p1")} · ${t("metrics.title")}`}
+        title={t("metrics.powerTitle")}
         description={
           data
             ? t("metrics.historyDescription", {
@@ -411,48 +478,6 @@ function PlugsCard({ period, anchor }: { period: Period; anchor: string }) {
             </div>
           </div>
         ))}
-      </div>
-    </Card>
-  );
-}
-
-function SolarCard({ period, anchor, exported }: { period: Period; anchor: string; exported: number | null }) {
-  const { data } = useQuery({
-    queryKey: ["solar-history", period, anchor],
-    queryFn: () => api.solarHistory(period, anchor),
-    placeholderData: keepPreviousData,
-    refetchInterval: 60_000,
-  });
-  const inverters = data?.inverters ?? [];
-  if (!inverters.length) return null;
-  const produced = inverters.reduce((sum, i) => sum + i.energy_kwh, 0);
-  // Everything produced that did not go out to the grid was used in the house.
-  const used = exported == null ? null : Math.max(produced - exported, 0);
-
-  return (
-    <Card>
-      <CardHeader title={t("solar.title")} description={t("solar.historyDescription")} />
-      <div className="px-5 pt-5 pb-5 sm:px-6">
-        <Value value={energy(produced)} unit="kWh" />
-        {used != null && produced > 0 && (
-          <div className="tabular mt-3 text-sm text-muted">
-            {t("solar.selfUsed", {
-              used: energy(used),
-              pct: Math.round((used / produced) * 100),
-              exported: energy(Math.min(exported ?? 0, produced)),
-            })}
-          </div>
-        )}
-        {inverters.length > 1 && (
-          <div className="mt-4 flex flex-col divide-y divide-border border-t border-border">
-            {inverters.map((i) => (
-              <div key={i.id} className="flex items-baseline justify-between gap-3 py-2.5 text-sm">
-                <span className="truncate font-medium">{i.name}</span>
-                <span className="tabular font-semibold">{energy(i.energy_kwh)} kWh</span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </Card>
   );

@@ -1,10 +1,12 @@
-import { Maximize2, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronDown, Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Series } from "../lib/api";
 import { metricChartOption, metricLabel } from "../lib/charts";
 import { shortDate, time } from "../lib/format";
 import { t } from "../lib/i18n";
 import {
+  availableMetrics,
+  DETAIL_GROUPS,
   GROUP_LABEL,
   MAX_UNITS,
   toggleMetric,
@@ -16,7 +18,9 @@ import { Chart, type ChartInstance, type ZoomRange } from "./Chart";
 import { cn } from "./ui";
 
 const DOT_CLASS: Record<MetricDef["color"], string> = {
-  import: "bg-import",
+  home: "bg-foreground",
+  solar: "bg-solar",
+  grid: "bg-grid",
   export: "bg-export",
   l1: "bg-l1",
   l2: "bg-l2",
@@ -24,7 +28,8 @@ const DOT_CLASS: Record<MetricDef["color"], string> = {
 };
 
 function useSelection(storageKey: string, fallback: string[], catalog: MetricDef[]) {
-  const key = `jouleflow-metrics-${storageKey}`;
+  // v2: the default changed to consumption, solar and grid, so start from that again.
+  const key = `jouleflow-metrics-v2-${storageKey}`;
   const [selected, setSelected] = useState<string[]>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(key) ?? "null");
@@ -87,9 +92,13 @@ export function MetricChart({
 }: Props) {
   const { resolved } = useTheme();
   const [selected, setSelected] = useSelection(storageKey, defaultSelection, catalog);
+  const available = useMemo(() => availableMetrics(catalog, data?.fields), [catalog, data?.fields]);
   const metrics = useMemo(
-    () => selected.map((id) => catalog.find((m) => m.id === id)).filter((m): m is MetricDef => !!m),
-    [selected, catalog],
+    () => selected.map((id) => available.find((m) => m.id === id)).filter((m): m is MetricDef => !!m),
+    [selected, available],
+  );
+  const [showDetail, setShowDetail] = useState(() =>
+    selected.some((id) => DETAIL_GROUPS.includes(catalog.find((m) => m.id === id)?.group as MetricGroup)),
   );
 
   const chartRef = useRef<ChartInstance | null>(null);
@@ -156,75 +165,93 @@ export function MetricChart({
 
   const groups = useMemo(() => {
     const map = new Map<MetricGroup, MetricDef[]>();
-    for (const m of catalog) map.set(m.group, [...(map.get(m.group) ?? []), m]);
+    for (const m of available) map.set(m.group, [...(map.get(m.group) ?? []), m]);
     return [...map.entries()];
-  }, [catalog]);
+  }, [available]);
+  const mainGroups = groups.filter(([g]) => !DETAIL_GROUPS.includes(g));
+  const detailGroups = groups.filter(([g]) => DETAIL_GROUPS.includes(g));
 
   const hasData = Boolean(data?.points.length);
 
+  const chip = (m: MetricDef) => {
+    const on = selected.includes(m.id);
+    return (
+      <button
+        key={m.id}
+        type="button"
+        aria-pressed={on}
+        onClick={() => setSelected((current) => toggleMetric(current, m.id, available))}
+        className={cn(
+          "inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[13px] font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground",
+          on
+            ? "border-foreground/20 bg-muted-surface text-foreground"
+            : "border-border text-muted hover:bg-muted-surface/60 hover:text-foreground",
+        )}
+      >
+        <span
+          className={cn(
+            "rounded-full transition",
+            m.color === "home" ? "h-[3px] w-3" : "size-2.5",
+            on ? DOT_CLASS[m.color] : "bg-border",
+          )}
+        />
+        {metricLabel(m)}
+      </button>
+    );
+  };
+
   return (
     <div className={className}>
-      <div className="flex flex-wrap gap-x-5 gap-y-2.5 px-5 pt-4 sm:px-6">
-        {groups.map(([group, items]) => (
-          <div key={group} className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-0.5 text-xs font-medium text-subtle">{t(GROUP_LABEL[group])}</span>
-            {items.map((m) => {
-              const on = selected.includes(m.id);
-              return (
-                <button
-                  key={m.id}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => setSelected((current) => toggleMetric(current, m.id, catalog))}
-                  className={cn(
-                    "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition",
-                    on
-                      ? "border-foreground/25 bg-muted-surface text-foreground"
-                      : "border-border text-muted hover:bg-muted-surface/60 hover:text-foreground",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "size-2 rounded-full transition",
-                      on ? DOT_CLASS[m.color] : "bg-border",
-                    )}
-                  />
-                  {metricLabel(m)}
-                </button>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-
-      <div className="relative px-3 pt-2 pb-4 sm:px-5">
+      <div className="flex flex-wrap items-center gap-2 px-5 pt-4 sm:px-6">
+        {mainGroups.flatMap(([, items]) => items.map(chip))}
+        {detailGroups.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={showDetail}
+            onClick={() => setShowDetail((v) => !v)}
+            className="inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-[13px] font-medium text-muted transition hover:text-foreground"
+          >
+            {showDetail ? t("metrics.less") : t("metrics.more")}
+            <ChevronDown className={cn("size-3.5 transition", showDetail && "rotate-180")} />
+          </button>
+        )}
         {option && hasData && (
-          <div className="flex min-h-7 items-center justify-end gap-2 px-2 pb-1">
-            <span className="tabular mr-auto truncate text-xs text-muted">
-              {zoom
-                ? t(live ? "chart.zoomedLive" : "chart.zoomed", {
-                    start: rangeLabel(zoom[0], bucketLabel),
-                    end: rangeLabel(zoom[1], bucketLabel),
-                  })
-                : t(finePointer() ? "chart.zoomHint" : "chart.zoomHintTouch")}
-            </span>
-            <div className="flex shrink-0 items-center rounded-lg border border-border">
-              <ZoomButton label={t("chart.zoomIn")} onClick={() => zoomBy(0.5)}>
-                <ZoomIn className="size-3.5" />
-              </ZoomButton>
-              <ZoomButton label={t("chart.zoomOut")} onClick={() => zoomBy(2)} disabled={!zoom}>
-                <ZoomOut className="size-3.5" />
-              </ZoomButton>
-              <ZoomButton label={t("chart.resetZoom")} onClick={() => dispatchZoom(null)} disabled={!zoom}>
-                <Maximize2 className="size-3.5" />
-              </ZoomButton>
-            </div>
+          <div className="ml-auto flex shrink-0 items-center rounded-lg border border-border">
+            <ZoomButton label={t("chart.zoomIn")} onClick={() => zoomBy(0.5)}>
+              <ZoomIn className="size-3.5" />
+            </ZoomButton>
+            <ZoomButton label={t("chart.zoomOut")} onClick={() => zoomBy(2)} disabled={!zoom}>
+              <ZoomOut className="size-3.5" />
+            </ZoomButton>
+            <ZoomButton label={t("chart.resetZoom")} onClick={() => dispatchZoom(null)} disabled={!zoom}>
+              <Maximize2 className="size-3.5" />
+            </ZoomButton>
           </div>
         )}
+      </div>
+      {showDetail && (
+        <div className="flex flex-wrap gap-x-5 gap-y-2 px-5 pt-3 sm:px-6">
+          {detailGroups.map(([group, items]) => (
+            <div key={group} className="flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-xs font-medium text-subtle">{t(GROUP_LABEL[group])}</span>
+              {items.map(chip)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="relative px-3 pt-1 pb-4 sm:px-5">
+        <div className="tabular flex min-h-6 items-center px-2 text-xs text-muted">
+          {zoom &&
+            t(live ? "chart.zoomedLive" : "chart.zoomed", {
+              start: rangeLabel(zoom[0], bucketLabel),
+              end: rangeLabel(zoom[1], bucketLabel),
+            })}
+        </div>
         {option && hasData ? (
           <Chart
             option={option}
-            replaceMerge={["series", "yAxis"]}
+            replaceMerge={["series", "yAxis", "xAxis", "grid"]}
             brushZoom
             chartRef={chartRef}
             onZoom={handleZoom}
@@ -240,8 +267,6 @@ export function MetricChart({
     </div>
   );
 }
-
-const finePointer = () => window.matchMedia("(pointer: fine)").matches;
 
 function rangeLabel(ms: number, bucketLabel: Props["bucketLabel"]): string {
   const ts = ms / 1000;

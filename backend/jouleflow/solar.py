@@ -14,6 +14,7 @@ up as "no response" and is expected.
 from __future__ import annotations
 
 import asyncio
+import bisect
 import contextlib
 import logging
 import time
@@ -24,14 +25,21 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from pymodbus.client import AsyncModbusTcpClient
 
+from .queries import _change
 from .storage import Storage
 
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 10.0
+POLL_INTERVAL_INT = int(POLL_INTERVAL)
 STALE_AFTER = 45.0
 # A lifetime counter that jumps by more than this per hour is treated as a glitch or reset.
 MAX_KWH_PER_HOUR = 50.0
+# Growatt counters step in 0.1 kWh. Within that margin integrated power is used instead,
+# so hourly bars are smooth while totals still follow the counter.
+COUNTER_STEP_KWH = 0.15
+# Samples further apart than this are not integrated (Jouleflow or the inverter was away).
+MAX_GAP = 120
 
 GROWATT_BLOCK = (0, 95)
 GROWATT_STATUS = {0: "waiting", 1: "normal", 3: "fault"}
@@ -110,6 +118,13 @@ def parse_growatt(r: list[int]) -> InverterReading:
     )
 
 
+def consumption(energy: dict, solar: float | None) -> float | None:
+    """What the house used: imported minus exported plus what the panels produced."""
+    if energy.get("import") is None:
+        return None
+    return round(max(energy["import"] - (energy.get("export") or 0.0) + (solar or 0.0), 0.0), 3)
+
+
 class NoResponse(Exception):
     """The gateway accepted the connection but the inverter did not answer."""
 
@@ -174,6 +189,58 @@ class InverterState:
     @property
     def display_name(self) -> str:
         return self.name or f"Growatt {self.host}"
+
+
+# Gaps up to this long between two readings are filled in (a missed poll or a restart),
+# longer ones mean the inverter was off.
+BRIDGE_GAP = 300
+
+
+def bridge_gaps(points: list[tuple[int, float]], resolution: int) -> list[tuple[int, float]]:
+    """Fill short gaps between readings by interpolating, so a missed poll doesn't show
+    up as a moment without sun."""
+    if resolution >= 3600:
+        return points
+    out: list[tuple[int, float]] = []
+    for a, b in zip(points, points[1:], strict=False):
+        out.append(a)
+        gap = b[0] - a[0]
+        if resolution < gap <= BRIDGE_GAP:
+            steps = gap // resolution
+            for k in range(1, steps):
+                out.append((a[0] + k * resolution, a[1] + (b[1] - a[1]) * k / steps))
+    if points:
+        out.append(points[-1])
+    return out
+
+
+def average_into_buckets(
+    points: list[tuple[int, float]],
+    resolution: int,
+    starts: list[int],
+    bucket: int,
+    since: int | None,
+) -> list[float | None]:
+    """Average solar power (W) for each bucket starting at `starts`.
+
+    `points` are (timestamp, W) at `resolution` seconds, with no rows while the inverter
+    sleeps. Missing slots count as zero once solar data exists (`since`); before that the
+    result is None, so charts don't pretend there was no sun before the panels were
+    connected. Buckets finer than the resolution take the value of the slot they fall in.
+    """
+    points = bridge_gaps(points, resolution)
+    times = [p[0] for p in points]
+    out: list[float | None] = []
+    for t in starts:
+        if since is None or t + bucket <= since:
+            out.append(None)
+        elif bucket <= resolution:
+            i = bisect.bisect_right(times, t) - 1
+            out.append(points[i][1] if i >= 0 and t - times[i] < resolution else 0.0)
+        else:
+            lo, hi = bisect.bisect_left(times, t), bisect.bisect_left(times, t + bucket)
+            out.append(sum(p[1] for p in points[lo:hi]) / (bucket / resolution))
+    return out
 
 
 class SolarManager:
@@ -315,6 +382,25 @@ class SolarManager:
             delta = max(last - first, 0.0)
         return delta
 
+    def _integrated(self, inverter_id: str, start: int, end: int) -> float:
+        rows = self.storage._db.execute(  # noqa: SLF001
+            "SELECT ts, power FROM solar_samples WHERE inverter_id = ? AND ts >= ? AND ts < ? "
+            "ORDER BY ts",
+            (inverter_id, start, end),
+        ).fetchall()
+        wh = sum(
+            (a["power"] + b["power"]) / 2 * (b["ts"] - a["ts"]) / 3600
+            for a, b in zip(rows, rows[1:], strict=False)
+            if 0 < b["ts"] - a["ts"] <= MAX_GAP
+            and a["power"] is not None
+            and b["power"] is not None
+        )
+        return wh / 1000
+
+    @staticmethod
+    def _smooth(counter: float, integrated: float) -> float:
+        return integrated if abs(integrated - counter) <= COUNTER_STEP_KWH else counter
+
     def rollup(self, now: float) -> None:
         """Roll complete hours of samples into solar_agg_1h and apply retention."""
         db = self.storage._db  # noqa: SLF001
@@ -358,6 +444,7 @@ class SolarManager:
             ).fetchone()[0]
             hours = 1 if prev_ts is None else (hour - prev_ts) / 3600
             energy = self._delta(baseline, row["first_kwh"], row["last_kwh"], hours)
+            energy = self._smooth(energy, self._integrated(inverter_id, hour, hour + 3600))
         db.execute(
             "INSERT OR REPLACE INTO solar_agg_1h VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -402,8 +489,133 @@ class SolarManager:
                 delta = self._delta(
                     baseline, row["first_kwh"], row["last_kwh"], (end - since) / 3600
                 )
+                delta = self._smooth(delta, self._integrated(inverter_id, since, end))
                 result[inverter_id] = result.get(inverter_id, 0.0) + delta
         return result
+
+    def first_data(self) -> int | None:
+        row = self.storage.query_one(
+            "SELECT min(t) AS t FROM (SELECT min(ts) AS t FROM solar_samples "
+            "UNION ALL SELECT min(ts) FROM solar_agg_1h)"
+        )
+        return row["t"] if row else None
+
+    def power_points(
+        self, start: int, end: int, bucket: int
+    ) -> tuple[list[tuple[int, float]], int]:
+        """Total solar power over time, from raw samples when they still cover the window,
+        otherwise from hourly rollups. Returns (points, resolution in seconds)."""
+        oldest = self.storage.query_one("SELECT min(ts) AS t FROM solar_samples")["t"]
+        if oldest is not None and oldest <= max(start, self.first_data() or start):
+            res = max(POLL_INTERVAL_INT, bucket if bucket < 3600 else 60)
+            rows = self.storage.query(
+                "SELECT t, sum(p) AS w FROM (SELECT ts / ? * ? AS t, avg(power) AS p "
+                "FROM solar_samples WHERE ts >= ? AND ts < ? GROUP BY t, inverter_id) "
+                "GROUP BY t ORDER BY t",
+                (res, res, start - res, end),
+            )
+        else:
+            res = 3600
+            rows = self.storage.query(
+                "SELECT ts AS t, sum(coalesce(energy * 1000, power_avg)) AS w FROM solar_agg_1h "
+                "WHERE ts >= ? AND ts < ? GROUP BY ts ORDER BY ts",
+                (start - res, end),
+            )
+        return [(r["t"], r["w"] or 0.0) for r in rows], res
+
+    def add_to_series(self, payload: dict) -> dict:
+        """Add solar power and total home consumption to a measurement series."""
+        if not self.states and self.first_data() is None:
+            return payload
+        fields = payload["fields"]
+        imp, exp = fields.index("p_imp_avg"), fields.index("p_exp_avg")
+        bucket = payload["bucket_seconds"]
+        starts = [p[0] for p in payload["points"]]
+        solar: list[float | None] = []
+        if starts:
+            points, res = self.power_points(starts[0], starts[-1] + bucket, bucket)
+            solar = average_into_buckets(points, res, starts, bucket, self.first_data())
+        rows = []
+        for point, w in zip(payload["points"], solar, strict=True):
+            home = None
+            if w is not None and point[imp] is not None:
+                home = max(point[imp] - (point[exp] or 0.0) + w, 0.0)
+            rows.append(
+                [
+                    *point,
+                    None if w is None else round(w, 1),
+                    None if home is None else round(home, 1),
+                ]
+            )
+        return {**payload, "fields": [*fields, "solar_avg", "home_avg"], "points": rows}
+
+    def energy_total(self, start: int, end: int) -> float | None:
+        if end <= start or (not self.states and self.first_data() is None):
+            return None
+        return round(sum(self.energy_between(start, end).values()), 3)
+
+    def add_to_summary(self, summary: dict, now: int) -> dict:
+        """Add today's solar production and home consumption to the live summary."""
+        day_start = summary["day_start"]
+        yesterday_start = self.storage.local_midnight(day_start - 1)
+        same_time = min(yesterday_start + (now - day_start), day_start)
+        periods = {
+            "today": (day_start, now),
+            "yesterday_same_time": (yesterday_start, same_time),
+            "yesterday": (yesterday_start, day_start),
+        }
+        out = {**summary}
+        for key, (start, end) in periods.items():
+            solar = self.energy_total(start, end)
+            out[key] = {
+                **summary[key],
+                "solar": solar,
+                "consumption": consumption(summary[key], solar),
+            }
+        out["change_pct"] = {
+            **summary["change_pct"],
+            "solar": _change(out["today"]["solar"], out["yesterday_same_time"]["solar"]),
+            "consumption": _change(
+                out["today"]["consumption"], out["yesterday_same_time"]["consumption"]
+            ),
+        }
+        return out
+
+    def add_to_history(self, history: dict) -> dict:
+        """Add solar production and consumption per bar and to the period totals.
+
+        Bars become [ts, import, export, gas, cost, feed-in cost, solar, consumption].
+        """
+        bars = history["bars"]
+        bounds = [b[0] for b in bars] + [history["end"]]
+        now = int(time.time())
+        out_bars = []
+        for i, bar in enumerate(bars):
+            end = min(bounds[i + 1], now)
+            solar = self.energy_total(bar[0], end) if bar[0] < now else None
+            if solar is not None and solar == 0 and bar[1] is None:
+                solar = None
+            use = None
+            if solar is not None and bar[1] is not None:
+                use = round(max(bar[1] - (bar[2] or 0.0) + solar, 0.0), 3)
+            out_bars.append([*bar, solar, use])
+        totals, previous = history["totals"], history["previous"]
+        solar_total = self.energy_total(history["start"], min(history["end"], now))
+        solar_prev = self.energy_total(previous["start"], min(previous["end"], now))
+        return {
+            **history,
+            "bars": out_bars,
+            "totals": {
+                **totals,
+                "solar": solar_total,
+                "consumption": consumption(totals, solar_total),
+            },
+            "previous": {
+                **previous,
+                "solar": solar_prev,
+                "consumption": consumption(previous, solar_prev),
+            },
+        }
 
     def public_states(self) -> list[dict]:
         now = time.time()
