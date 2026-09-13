@@ -138,7 +138,8 @@ export const en = {
   "chart.zoomIn": "Zoom in",
   "chart.zoomOut": "Zoom out",
   "chart.resetZoom": "Reset zoom",
-  "chart.zoomHint": "Pinch or ctrl + scroll to zoom, drag to pan",
+  "chart.zoomHint": "Drag across the chart to zoom in, or use the bar below it",
+  "chart.zoomHintTouch": "Drag the handles of the bar below the chart to zoom",
   "chart.zoomed": "Zoomed in · {start} – {end}",
   "chart.zoomedLive": "Paused while zoomed · {start} – {end}",
 

@@ -140,7 +140,8 @@ export const nl: Record<MessageKey, string> = {
   "chart.zoomIn": "Inzoomen",
   "chart.zoomOut": "Uitzoomen",
   "chart.resetZoom": "Zoom herstellen",
-  "chart.zoomHint": "Knijp of ctrl + scrollen om te zoomen, sleep om te verschuiven",
+  "chart.zoomHint": "Sleep over de grafiek om in te zoomen, of gebruik de balk eronder",
+  "chart.zoomHintTouch": "Sleep de handvatten van de balk onder de grafiek om te zoomen",
   "chart.zoomed": "Ingezoomd · {start} – {end}",
   "chart.zoomedLive": "Gepauzeerd tijdens zoomen · {start} – {end}",
 

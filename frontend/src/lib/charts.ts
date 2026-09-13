@@ -107,8 +107,6 @@ export function metricChartOption(
     end: number;
     bucketLabel: "time" | "date" | "datetime";
     showRange: boolean;
-    /** Visible x-range in ms, or null to show the whole window. */
-    zoom: [number, number] | null;
   },
 ): ChartOption {
   const c = readTokens();
@@ -195,7 +193,7 @@ export function metricChartOption(
 
   return {
     animation: false,
-    grid: { left: 8, right: units.length > 1 ? 8 : 16, top: 28, bottom: 4, containLabel: true },
+    grid: { left: 8, right: units.length > 1 ? 8 : 16, top: 28, bottom: 44, containLabel: true },
     tooltip: {
       ...tooltipBase(c),
       trigger: "axis",
@@ -239,23 +237,46 @@ export function metricChartOption(
       axisLabel: { ...base.axisLabel, hideOverlap: true, formatter: (v: number) => timeLabel(v / 1000) },
     },
     yAxis: yAxis.length ? yAxis : [{ type: "value", ...base }],
+    // Navigator below the plot: drag its handles or the selected window to zoom and pan.
+    // Works with mouse and touch, and always shows where the view is. Zoom state is
+    // deliberately not part of this option, so data updates don't reset it.
     dataZoom: [
       {
-        type: "inside",
+        type: "slider",
         xAxisIndex: 0,
         // Rescale the y-axes to what is visible, keeping lines connected at the edges.
         filterMode: "weakFilter",
-        startValue: opts.zoom?.[0] ?? opts.start * 1000,
-        endValue: opts.zoom?.[1] ?? opts.end * 1000,
         minValueSpan: Math.max(data.bucket_seconds * 12, 60) * 1000,
-        // Pinch (trackpads send ctrl + wheel) or ctrl + scroll zooms; plain scrolling
-        // keeps scrolling the page. Dragging pans, but only once zoomed in.
-        zoomOnMouseWheel: "ctrl",
-        moveOnMouseWheel: false,
-        moveOnMouseMove: opts.zoom != null,
-        preventDefaultMouseMove: opts.zoom != null,
+        height: 24,
+        bottom: 6,
+        left: 16,
+        right: 16,
+        showDetail: false,
+        brushSelect: false,
+        borderColor: c.border,
+        borderRadius: 6,
+        backgroundColor: "transparent",
+        fillerColor: `${c.foreground}12`,
+        dataBackground: {
+          lineStyle: { color: c.subtle, opacity: 0.6, width: 1 },
+          areaStyle: { color: c.subtle, opacity: 0.08 },
+        },
+        selectedDataBackground: {
+          lineStyle: { color: c.muted, width: 1 },
+          areaStyle: { color: c.muted, opacity: 0.15 },
+        },
+        handleIcon: "path://M-3,-9h6v18h-6z",
+        handleSize: "90%",
+        handleStyle: { color: c.card, borderColor: c.muted, borderWidth: 1 },
+        moveHandleSize: 0,
+        emphasis: { handleStyle: { borderColor: c.foreground } },
       },
     ],
+    // Hidden toolbox that powers drag-to-select zooming on the plot itself.
+    toolbox: {
+      show: false,
+      feature: { dataZoom: { yAxisIndex: "none", filterMode: "weakFilter" } },
+    },
     series,
   };
 }
