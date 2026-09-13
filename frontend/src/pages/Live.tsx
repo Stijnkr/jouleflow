@@ -10,9 +10,20 @@ import { DEFAULT_P1_SELECTION, P1_METRICS, readingToPoint } from "../lib/metrics
 import { t } from "../lib/i18n";
 import { useTheme } from "../lib/theme";
 
-const RANGE_SECONDS: Record<PowerRange, number> = { hour: 3600, day: 86400, week: 7 * 86400 };
+const RANGE_SECONDS: Record<PowerRange, number> = {
+  "15m": 900,
+  hour: 3600,
+  "6h": 6 * 3600,
+  day: 86400,
+  week: 7 * 86400,
+};
+
+// Windows short enough to append every live reading.
+const LIVE_APPEND = new Set<PowerRange>(["15m", "hour", "6h"]);
 const RANGE_LABEL = {
+  "15m": "live.range15m",
   hour: "live.rangeHour",
+  "6h": "live.range6h",
   day: "live.rangeDay",
   week: "live.rangeWeek",
 } as const;
@@ -48,7 +59,9 @@ export function LivePage() {
               value={range}
               onChange={setRange}
               options={[
+                { value: "15m", label: t("range.15m") },
                 { value: "hour", label: t("range.hour") },
+                { value: "6h", label: t("range.6h") },
                 { value: "day", label: t("range.day") },
                 { value: "week", label: t("range.week") },
               ]}
@@ -240,14 +253,14 @@ function NetCard({ summary }: { summary?: Summary }) {
 
 // ---------------------------------------------------------------------------- measurements
 
-const LIVE_BUCKET_LABEL = { hour: "time", day: "time", week: "datetime" } as const;
+const LIVE_BUCKET_LABEL = { "15m": "time", hour: "time", "6h": "time", day: "time", week: "datetime" } as const;
 
 function MeasurementsCard({ range }: { range: PowerRange }) {
   const { subscribe } = useLive();
   const query = useQuery({
     queryKey: ["series", range],
     queryFn: () => api.series(range),
-    refetchInterval: range === "hour" ? 5 * 60_000 : 60_000,
+    refetchInterval: LIVE_APPEND.has(range) ? 5 * 60_000 : 60_000,
   });
   const [data, setData] = useState<Series | undefined>();
   const [end, setEnd] = useState(() => Math.floor(Date.now() / 1000));
@@ -259,16 +272,17 @@ function MeasurementsCard({ range }: { range: PowerRange }) {
     }
   }, [query.data]);
 
-  // Append every live reading to the hour view.
+  // Append live readings to the short windows. Points closer together than the
+  // window's bucket size are skipped so the chart keeps a steady density.
   useEffect(() => {
-    if (range !== "hour") return;
+    if (!LIVE_APPEND.has(range)) return;
     return subscribe((r) => {
       setEnd(r.ts);
       setData((prev) => {
         if (!prev) return prev;
         const last = prev.points[prev.points.length - 1];
-        if (last && r.ts <= (last[0] as number)) return prev;
-        const cutoff = r.ts - RANGE_SECONDS.hour;
+        if (last && r.ts < (last[0] as number) + prev.bucket_seconds) return prev;
+        const cutoff = r.ts - RANGE_SECONDS[range];
         const points = prev.points.filter((p) => (p[0] as number) >= cutoff);
         points.push(readingToPoint(r, prev.fields));
         return { ...prev, points };
@@ -290,7 +304,9 @@ function MeasurementsCard({ range }: { range: PowerRange }) {
         start={end - RANGE_SECONDS[range]}
         end={end}
         bucketLabel={LIVE_BUCKET_LABEL[range]}
-        showRange={range !== "hour"}
+        showRange={!LIVE_APPEND.has(range)}
+        live={LIVE_APPEND.has(range)}
+        resetKey={range}
         emptyText={query.isSuccess ? t("live.collecting") : undefined}
       />
     </Card>

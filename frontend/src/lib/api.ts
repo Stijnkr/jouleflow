@@ -46,7 +46,7 @@ export type Summary = {
   export_window: { start: number; end: number } | null;
 };
 
-export type PowerRange = "hour" | "day" | "week";
+export type PowerRange = "15m" | "hour" | "6h" | "day" | "week";
 
 /** Measurements over time. Each point lists values in the order of `fields` ("ts" first). */
 export type Series = {

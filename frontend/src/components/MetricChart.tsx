@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+import { Maximize2, ZoomIn, ZoomOut } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { Series } from "../lib/api";
 import { metricChartOption, metricLabel } from "../lib/charts";
+import { shortDate, time } from "../lib/format";
 import { t } from "../lib/i18n";
 import {
   GROUP_LABEL,
@@ -63,6 +65,10 @@ type Props = {
   showRange?: boolean;
   emptyText?: string;
   className?: string;
+  /** The chart follows new data (live); zooming pauses that until the zoom is reset. */
+  live?: boolean;
+  /** Changing this resets the zoom, e.g. when switching range or period. */
+  resetKey?: string;
 };
 
 export function MetricChart({
@@ -76,7 +82,50 @@ export function MetricChart({
   showRange = true,
   emptyText,
   className,
+  live = false,
+  resetKey,
 }: Props) {
+  const [zoom, setZoom] = useState<[number, number] | null>(null);
+  useEffect(() => setZoom(null), [resetKey]);
+
+  const fullStart = start * 1000;
+  const fullEnd = end * 1000;
+  // While zoomed on a live chart, keep the window where the user left it.
+  const [frozenEnd, setFrozenEnd] = useState<number | null>(null);
+  const windowStart = fullStart;
+  const windowEnd = zoom && live ? (frozenEnd ?? fullEnd) : fullEnd;
+
+  const applyZoom = (range: [number, number] | null) => {
+    if (!range) {
+      setZoom(null);
+      setFrozenEnd(null);
+      return;
+    }
+    const minSpan = Math.max((data?.bucket_seconds ?? 60) * 12, 60) * 1000;
+    let [a, b] = range;
+    if (b - a < minSpan) {
+      const mid = (a + b) / 2;
+      [a, b] = [mid - minSpan / 2, mid + minSpan / 2];
+    }
+    a = Math.max(a, windowStart);
+    b = Math.min(b, windowEnd);
+    if (b - a >= (windowEnd - windowStart) * 0.98) {
+      setZoom(null);
+      setFrozenEnd(null);
+      return;
+    }
+    if (!zoom && live) setFrozenEnd(fullEnd);
+    setZoom([a, b]);
+  };
+
+  const zoomBy = (factor: number) => {
+    const [a, b] = zoom ?? [windowStart, windowEnd];
+    // Zooming in on a live chart keeps the most recent part in view.
+    const anchor = !zoom && live ? b : (a + b) / 2;
+    const span = (b - a) * factor;
+    const ratio = !zoom && live ? 1 : 0.5;
+    applyZoom([anchor - span * ratio, anchor + span * (1 - ratio)]);
+  };
   const { resolved } = useTheme();
   const [selected, setSelected] = useSelection(storageKey, defaultSelection, catalog);
   const metrics = useMemo(
@@ -87,11 +136,17 @@ export function MetricChart({
   const option = useMemo(
     () =>
       data && metrics.length
-        ? metricChartOption(data, metrics, { start, end, bucketLabel, showRange })
+        ? metricChartOption(data, metrics, {
+            start: windowStart / 1000,
+            end: windowEnd / 1000,
+            bucketLabel,
+            showRange,
+            zoom,
+          })
         : null,
     // `resolved` is a dependency because chart colours are read from the active theme.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, metrics, start, end, bucketLabel, showRange, resolved],
+    [data, metrics, windowStart, windowEnd, bucketLabel, showRange, zoom, resolved],
   );
 
   const groups = useMemo(() => {
@@ -138,8 +193,36 @@ export function MetricChart({
       </div>
 
       <div className="relative px-3 pt-2 pb-4 sm:px-5">
+        {option && hasData && (
+          <div className="flex items-center justify-end gap-2 px-2 pb-1">
+            {zoom && (
+              <span className="tabular mr-auto truncate text-xs text-muted">
+                {t(live ? "chart.zoomedLive" : "chart.zoomed", {
+                  start: rangeLabel(zoom[0], bucketLabel),
+                  end: rangeLabel(zoom[1], bucketLabel),
+                })}
+              </span>
+            )}
+            <div className="flex items-center rounded-lg border border-border" title={t("chart.zoomHint")}>
+              <ZoomButton label={t("chart.zoomIn")} onClick={() => zoomBy(0.5)}>
+                <ZoomIn className="size-3.5" />
+              </ZoomButton>
+              <ZoomButton label={t("chart.zoomOut")} onClick={() => zoomBy(2)} disabled={!zoom}>
+                <ZoomOut className="size-3.5" />
+              </ZoomButton>
+              <ZoomButton label={t("chart.resetZoom")} onClick={() => applyZoom(null)} disabled={!zoom}>
+                <Maximize2 className="size-3.5" />
+              </ZoomButton>
+            </div>
+          </div>
+        )}
         {option && hasData ? (
-          <Chart option={option} notMerge className="h-64 w-full sm:h-80" />
+          <Chart
+            option={option}
+            notMerge
+            onDataZoom={(range) => applyZoom(range)}
+            className="h-64 w-full sm:h-80"
+          />
         ) : (
           <div className="grid h-64 place-items-center px-6 text-center text-sm text-muted sm:h-80">
             {!metrics.length ? t("metrics.empty", { max: MAX_UNITS }) : (emptyText ?? t("history.noData"))}
@@ -147,5 +230,35 @@ export function MetricChart({
         )}
       </div>
     </div>
+  );
+}
+
+function rangeLabel(ms: number, bucketLabel: Props["bucketLabel"]): string {
+  const ts = ms / 1000;
+  return bucketLabel === "time" ? time(ts) : `${shortDate(ts)} ${time(ts)}`;
+}
+
+function ZoomButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="grid size-7 place-items-center text-muted transition first:rounded-l-lg last:rounded-r-lg hover:bg-muted-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+    >
+      {children}
+    </button>
   );
 }

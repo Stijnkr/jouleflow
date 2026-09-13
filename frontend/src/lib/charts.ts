@@ -102,7 +102,14 @@ export function metricLabel(metric: MetricDef): string {
 export function metricChartOption(
   data: Series,
   metrics: MetricDef[],
-  opts: { start: number; end: number; bucketLabel: "time" | "date" | "datetime"; showRange: boolean },
+  opts: {
+    start: number;
+    end: number;
+    bucketLabel: "time" | "date" | "datetime";
+    showRange: boolean;
+    /** Visible x-range in ms, or null to show the whole window. */
+    zoom: [number, number] | null;
+  },
 ): ChartOption {
   const c = readTokens();
   const base = axisBase(c);
@@ -232,6 +239,23 @@ export function metricChartOption(
       axisLabel: { ...base.axisLabel, hideOverlap: true, formatter: (v: number) => timeLabel(v / 1000) },
     },
     yAxis: yAxis.length ? yAxis : [{ type: "value", ...base }],
+    dataZoom: [
+      {
+        type: "inside",
+        xAxisIndex: 0,
+        // Rescale the y-axes to what is visible, keeping lines connected at the edges.
+        filterMode: "weakFilter",
+        startValue: opts.zoom?.[0] ?? opts.start * 1000,
+        endValue: opts.zoom?.[1] ?? opts.end * 1000,
+        minValueSpan: Math.max(data.bucket_seconds * 12, 60) * 1000,
+        // Pinch (trackpads send ctrl + wheel) or ctrl + scroll zooms; plain scrolling
+        // keeps scrolling the page. Dragging pans, but only once zoomed in.
+        zoomOnMouseWheel: "ctrl",
+        moveOnMouseWheel: false,
+        moveOnMouseMove: opts.zoom != null,
+        preventDefaultMouseMove: opts.zoom != null,
+      },
+    ],
     series,
   };
 }

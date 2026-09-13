@@ -1,5 +1,6 @@
 import { BarChart, LineChart } from "echarts/charts";
 import {
+  DataZoomInsideComponent,
   GridComponent,
   MarkLineComponent,
   TooltipComponent,
@@ -16,6 +17,7 @@ echarts.use([
   TooltipComponent,
   VisualMapComponent,
   MarkLineComponent,
+  DataZoomInsideComponent,
   CanvasRenderer,
 ]);
 
@@ -26,16 +28,26 @@ type Props = {
   className?: string;
   /** Replace the whole option instead of merging (use when series change shape). */
   notMerge?: boolean;
+  /** Called with the visible x-range (axis values) after the user zooms or pans. */
+  onDataZoom?: (range: [number, number]) => void;
 };
 
-export function Chart({ option, className, notMerge = false }: Props) {
+export function Chart({ option, className, notMerge = false, onDataZoom }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
+  const zoomHandler = useRef(onDataZoom);
+  zoomHandler.current = onDataZoom;
 
   useEffect(() => {
     if (!el.current) return;
     const instance = echarts.init(el.current, null, { renderer: "canvas" });
     chart.current = instance;
+    instance.on("datazoom", () => {
+      const zoom = (instance.getOption().dataZoom as { startValue?: number; endValue?: number }[] | undefined)?.[0];
+      if (zoom?.startValue != null && zoom.endValue != null) {
+        zoomHandler.current?.([zoom.startValue, zoom.endValue]);
+      }
+    });
     const observer = new ResizeObserver(() => instance.resize());
     observer.observe(el.current);
     return () => {

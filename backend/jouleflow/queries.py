@@ -10,7 +10,7 @@ from typing import Literal
 from .storage import COUNTERS, STAT_COLUMNS, STATS, Storage
 from .tariffs import TariffSettings, bucket_cost, current_rate, day_of, sum_costs
 
-Range = Literal["hour", "day", "week"]
+Range = Literal["15m", "hour", "6h", "day", "week"]
 Period = Literal["day", "week", "month", "year"]
 
 EXPORT_THRESHOLD_W = 50.0
@@ -207,9 +207,11 @@ SERIES_FIELDS = (
 
 _STAT_EXPR = {col: (sample_expr, rollup_expr) for col, sample_expr, rollup_expr in STATS}
 
-# (bucket seconds, source table) per live window.
+# (window length, bucket seconds, source table) per live window.
 LIVE_WINDOWS: dict[str, tuple[int, int, str]] = {
+    "15m": (900, 1, "samples"),
     "hour": (3600, 5, "samples"),
+    "6h": (6 * 3600, 30, "samples"),
     "day": (86400, 60, "agg_1m"),
     "week": (7 * 86400, 900, "agg_1m"),
 }

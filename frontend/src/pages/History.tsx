@@ -310,6 +310,7 @@ function MeasurementsCard({ period, anchor }: { period: Period; anchor: string }
         catalog={P1_METRICS}
         defaultSelection={DEFAULT_P1_SELECTION}
         storageKey="history"
+        resetKey={`${period}-${anchor}`}
         start={data?.start ?? 0}
         end={data?.end ?? 0}
         bucketLabel={period === "day" ? "time" : period === "week" ? "datetime" : "date"}

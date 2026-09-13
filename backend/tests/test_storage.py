@@ -221,6 +221,9 @@ def test_series_contain_phase_measurements_at_the_right_resolution(storage):
     storage.insert_samples(readings)
     storage.rollup_all(start + 240)
 
+    detailed = queries.live_series(storage, "15m", start + 180)
+    assert detailed["bucket_seconds"] == 1 and len(detailed["points"]) == 180
+
     live = queries.live_series(storage, "hour", start + 180)
     assert live["bucket_seconds"] == 5 and len(live["points"]) == 36
     fields = live["fields"]
