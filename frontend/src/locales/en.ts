@@ -255,6 +255,24 @@ export const en = {
   "probe.no_response": "No response from {url}. Check the address.",
   "probe.connect_failed": "Could not connect to {url}. Check the address and that the reader is on.",
 
+  // HTTPS
+  "tls.title": "Secure connection (HTTPS)",
+  "tls.secure": "This connection is encrypted.",
+  "tls.insecure": "This connection is not encrypted. Open Jouleflow via https:// to protect your passwords.",
+  "tls.disabled": "HTTPS is turned off for this installation.",
+  "tls.description": "Jouleflow uses its own certificate authority for your home network. Install it once on each device to remove the browser warning.",
+  "tls.download": "Download certificate",
+  "tls.fingerprint": "Fingerprint (SHA-256)",
+  "tls.fingerprintHelp": "Check that this matches the fingerprint shown during installation before trusting the certificate.",
+  "tls.names": "Valid for",
+  "tls.renews": "Certificate valid until {date} · renewed automatically",
+  "tls.howTo": "How to install",
+  "tls.ios": "iPhone/iPad: open the downloaded file, install the profile under Settings → Profile downloaded, then turn on full trust under General → About → Certificate Trust Settings.",
+  "tls.android": "Android: Settings → Security → More security settings → Install from device storage → CA certificate.",
+  "tls.mac": "Mac: open the file, then in Keychain Access set the certificate to Always Trust.",
+  "tls.windows": "Windows: open the file → Install certificate → Local machine → Trusted Root Certification Authorities.",
+  "tls.limited": "This certificate authority can only vouch for local addresses (.local and private IP ranges), not for other websites.",
+
   // Account & login
   "auth.loginTitle": "Sign in to Jouleflow",
   "auth.loginDescription": "Enter the account you created for this installation.",

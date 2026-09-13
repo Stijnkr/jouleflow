@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import signal
 import time
 from collections.abc import AsyncIterator
 from dataclasses import asdict
@@ -16,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, queries
+from . import __version__, queries, tls
 from .collector import Collector
 from .config import Settings, settings
 from .drivers import (
@@ -440,6 +441,22 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             ]
         }
 
+    @app.get("/api/tls")
+    async def tls_info(request: Request) -> dict:
+        info = await asyncio.to_thread(tls.describe, cfg.tls_dir)
+        return {"enabled": cfg.https, "secure": request.url.scheme == "https", **(info or {})}
+
+    @app.get("/api/tls/ca.crt", include_in_schema=False)
+    async def tls_ca() -> FileResponse:
+        path = tls.paths(cfg.tls_dir).ca_cert
+        if not cfg.https or not path.exists():
+            raise HTTPException(404, "HTTPS is not enabled")
+        return FileResponse(
+            path,
+            media_type="application/x-x509-ca-cert",
+            filename="jouleflow-ca.crt",
+        )
+
     @app.get("/api/devices")
     async def devices() -> list[dict]:
         return [p1_status()]
@@ -496,6 +513,43 @@ def create_app(cfg: Settings = settings) -> FastAPI:
     return app
 
 
+def https_redirect_app(https_port: int):
+    """Tiny ASGI app that sends every plain HTTP request to the HTTPS address."""
+
+    async def app(scope, receive, send):  # noqa: ANN001, ANN202
+        if scope["type"] != "http":
+            return
+        host = next((v.decode() for k, v in scope["headers"] if k == b"host"), "localhost")
+        hostname = host.rsplit(":", 1)[0] if not host.startswith("[") else host.split("]")[0] + "]"
+        port = "" if https_port == 443 else f":{https_port}"
+        query = scope.get("query_string", b"").decode()
+        location = f"https://{hostname}{port}{scope['path']}" + (f"?{query}" if query else "")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 308,
+                "headers": [(b"location", location.encode()), (b"content-length", b"0")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})
+
+    return app
+
+
+async def _renew_certificates_periodically() -> None:
+    """Renew the HTTPS certificate when it nears expiry or the IP address changes.
+
+    The running server keeps the old certificate, so exit and let systemd restart us.
+    """
+    while True:
+        await asyncio.sleep(12 * 3600)
+        before = tls.describe(settings.tls_dir)
+        await asyncio.to_thread(tls.ensure_certificates, settings.tls_dir)
+        if tls.describe(settings.tls_dir) != before:
+            log.info("HTTPS certificate renewed; restarting to use it")
+            os.kill(os.getpid(), signal.SIGTERM)
+
+
 def run() -> None:
     import uvicorn
 
@@ -506,7 +560,42 @@ def run() -> None:
     )
     # python-kasa logs every failed query at ERROR; our plug manager reports failures itself.
     logging.getLogger("kasa").setLevel(logging.CRITICAL)
-    uvicorn.run(create_app(), host=settings.host, port=settings.port, log_level="warning")
+
+    app = create_app()
+    if not settings.https:
+        uvicorn.run(app, host=settings.host, port=settings.port, log_level="warning")
+        return
+
+    certs = tls.ensure_certificates(settings.tls_dir)
+    https = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=settings.host,
+            port=settings.https_port,
+            ssl_certfile=str(certs.cert),
+            ssl_keyfile=str(certs.key),
+            log_level="warning",
+        )
+    )
+    redirect = uvicorn.Server(
+        uvicorn.Config(
+            https_redirect_app(settings.https_port),
+            host=settings.host,
+            port=settings.port,
+            lifespan="off",
+            log_level="warning",
+        )
+    )
+
+    async def serve() -> None:
+        renew = asyncio.create_task(_renew_certificates_periodically())
+        try:
+            await asyncio.gather(https.serve(), redirect.serve())
+        finally:
+            renew.cancel()
+
+    log.info("Serving HTTPS on port %s (HTTP %s redirects)", settings.https_port, settings.port)
+    asyncio.run(serve())
 
 
 if __name__ == "__main__":

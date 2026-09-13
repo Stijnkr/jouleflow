@@ -257,6 +257,24 @@ export const nl: Record<MessageKey, string> = {
   "probe.no_response": "Geen reactie van {url}. Controleer het adres.",
   "probe.connect_failed": "Kan geen verbinding maken met {url}. Controleer het adres en of de lezer aan staat.",
 
+  // HTTPS
+  "tls.title": "Beveiligde verbinding (HTTPS)",
+  "tls.secure": "Deze verbinding is versleuteld.",
+  "tls.insecure": "Deze verbinding is niet versleuteld. Open Jouleflow via https:// om je wachtwoorden te beschermen.",
+  "tls.disabled": "HTTPS staat uit voor deze installatie.",
+  "tls.description": "Jouleflow gebruikt een eigen certificaatautoriteit voor je thuisnetwerk. Installeer die eenmalig op elk apparaat, dan verdwijnt de browserwaarschuwing.",
+  "tls.download": "Certificaat downloaden",
+  "tls.fingerprint": "Vingerafdruk (SHA-256)",
+  "tls.fingerprintHelp": "Controleer dat deze overeenkomt met de vingerafdruk die bij de installatie werd getoond, voordat je het certificaat vertrouwt.",
+  "tls.names": "Geldig voor",
+  "tls.renews": "Certificaat geldig tot {date} · wordt automatisch vernieuwd",
+  "tls.howTo": "Zo installeer je het",
+  "tls.ios": "iPhone/iPad: open het gedownloade bestand, installeer het profiel via Instellingen → Profiel gedownload, en zet daarna volledig vertrouwen aan onder Algemeen → Info → Certificaatvertrouwensinstellingen.",
+  "tls.android": "Android: Instellingen → Beveiliging → Meer beveiligingsinstellingen → Installeren vanuit apparaatopslag → CA-certificaat.",
+  "tls.mac": "Mac: open het bestand en zet het certificaat in Sleutelhangertoegang op Altijd vertrouwen.",
+  "tls.windows": "Windows: open het bestand → Certificaat installeren → Lokale computer → Vertrouwde basiscertificeringsinstanties.",
+  "tls.limited": "Deze certificaatautoriteit kan alleen lokale adressen (.local en privé-IP-adressen) bevestigen, geen andere websites.",
+
   // Account & inloggen
   "auth.loginTitle": "Inloggen bij Jouleflow",
   "auth.loginDescription": "Log in met het account dat je voor deze installatie hebt aangemaakt.",

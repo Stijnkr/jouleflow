@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
 
+    # Serve the web app over HTTPS with a local certificate authority. When enabled,
+    # `port` only redirects to `https_port`.
+    https: bool = False
+    https_port: int = 8443
+
     # Built frontend to serve. Leave empty to serve the API only.
     frontend_dir: Path | None = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
@@ -31,6 +36,10 @@ class Settings(BaseSettings):
 
     # Seconds between batched writes of raw samples (limits SD card wear).
     flush_interval: float = 10.0
+
+    @property
+    def tls_dir(self) -> Path:
+        return self.data_dir / "tls"
 
     @property
     def db_path(self) -> Path:

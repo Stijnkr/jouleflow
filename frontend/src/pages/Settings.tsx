@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, CircleAlert, Gauge, LogOut, Plug as PlugIcon, Receipt } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Download, Gauge, Lock, LockOpen, LogOut, Plug as PlugIcon, Receipt } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { Button, Card, CardHeader, PageHeader, Row, Segmented, StatusDot, TextField } from "../components/ui";
 import { api } from "../lib/api";
 import { bytes, duration, isoToDate, longDate, number } from "../lib/format";
+import { cn } from "../components/ui";
 import { LANGUAGES, t, tDynamic, useI18n, type Lang } from "../lib/i18n";
 import { useTheme, type ThemeSetting } from "../lib/theme";
 
@@ -84,6 +85,8 @@ export function SettingsPage() {
         </Card>
 
         <AccountCard />
+
+        <TlsCard />
 
         <Card>
           <CardHeader title={t("settings.appearance")} />
@@ -211,6 +214,57 @@ function AccountCard() {
           </Button>
         </div>
       </form>
+    </Card>
+  );
+}
+
+function TlsCard() {
+  const { data } = useQuery({ queryKey: ["tls"], queryFn: api.tls });
+  if (!data) return null;
+  const Icon = data.secure ? Lock : LockOpen;
+
+  return (
+    <Card>
+      <CardHeader title={t("tls.title")} description={data.enabled ? t("tls.description") : undefined} />
+      <div className="flex flex-col gap-5 p-5 sm:p-6">
+        <p className={cn("flex items-start gap-2 text-sm", data.secure ? "text-export" : "text-import")}>
+          <Icon className="mt-0.5 size-4 shrink-0" />
+          {!data.enabled ? t("tls.disabled") : data.secure ? t("tls.secure") : t("tls.insecure")}
+        </p>
+
+        {data.enabled && data.ca_fingerprint && (
+          <>
+            <div>
+              <div className="text-sm font-medium">{t("tls.fingerprint")}</div>
+              <code className="mt-1.5 block break-all rounded-lg bg-muted-surface px-3 py-2 font-mono text-xs leading-relaxed">
+                {data.ca_fingerprint}
+              </code>
+              <p className="mt-1.5 text-[13px] text-muted">{t("tls.fingerprintHelp")}</p>
+            </div>
+            <div className="divide-y divide-border">
+              <Row label={t("tls.names")} value={data.names?.join(", ")} />
+              <Row label="" value={t("tls.renews", { date: isoToDate(data.server_expires ?? "") })} />
+            </div>
+            <div className="flex flex-col gap-2 text-[13px] text-muted">
+              <span className="text-sm font-medium text-foreground">{t("tls.howTo")}</span>
+              <span>{t("tls.ios")}</span>
+              <span>{t("tls.android")}</span>
+              <span>{t("tls.mac")}</span>
+              <span>{t("tls.windows")}</span>
+              <span className="text-subtle">{t("tls.limited")}</span>
+            </div>
+            <div>
+              <a
+                href="/api/tls/ca.crt"
+                download="jouleflow-ca.crt"
+                className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted-surface"
+              >
+                <Download className="size-4" /> {t("tls.download")}
+              </a>
+            </div>
+          </>
+        )}
+      </div>
     </Card>
   );
 }

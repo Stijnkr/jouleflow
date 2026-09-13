@@ -49,8 +49,13 @@ done
 sleep 2
 if [ -f /var/lib/jouleflow/setup-code ]; then
   echo
-  echo "==> Create your Jouleflow account at http://$(hostname).local"
+  echo "==> Create your Jouleflow account at https://$(hostname).local"
   echo "    Setup code: $(cat /var/lib/jouleflow/setup-code)"
   echo
 fi
-echo "==> Done. Open http://$(hostname).local"
+if [ -f /var/lib/jouleflow/tls/ca.crt ]; then
+  echo "==> HTTPS certificate authority fingerprint (SHA-256):"
+  openssl x509 -in /var/lib/jouleflow/tls/ca.crt -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2 | sed 's/^/    /'
+  echo "    Your browser warns until you install this CA: Settings → Security in the web app."
+fi
+echo "==> Done. Open https://$(hostname).local"

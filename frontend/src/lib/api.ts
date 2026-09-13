@@ -139,6 +139,15 @@ export type PlugTestResult =
   | { ok: true; alias: string | null; model: string | null; is_on: boolean | null; power: number | null; has_energy: boolean }
   | { ok: false; code: string; error: string };
 
+export type TlsInfo = {
+  enabled: boolean;
+  secure: boolean;
+  ca_fingerprint?: string;
+  ca_expires?: string;
+  server_expires?: string;
+  names?: string[];
+};
+
 export type SystemInfo = {
   version: string;
   model?: string;
@@ -256,6 +265,7 @@ export type AuthStatus = { setup_required: boolean; authenticated: boolean; user
 
 export const api = {
   authStatus: () => get<AuthStatus>("/api/auth/status"),
+  tls: () => get<TlsInfo>("/api/tls"),
   login: (username: string, password: string) =>
     request<AuthStatus>("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
   setup: (username: string, password: string, setup_code: string) =>
