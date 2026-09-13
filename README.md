@@ -28,6 +28,12 @@ Jouleflow steers your home battery, heat pump and EV charger based on solar prod
 
 Ideas, questions and feedback are welcome. Open an issue or start a thread in [Discussions](https://github.com/Stijnkr/jouleflow/discussions).
 
+## License
+
+Jouleflow is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution.
+
+The name "Jouleflow" and its logo are not covered by this license. You're free to use, modify and redistribute the code, but please don't name your fork or product "Jouleflow".
+
 ## ⚠️ Disclaimer
 
 Jouleflow controls real electrical equipment. Use at your own risk and always follow your hardware manufacturer's safety guidelines.
