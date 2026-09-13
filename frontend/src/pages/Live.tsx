@@ -382,16 +382,9 @@ function PhasesCard({ reading }: { reading: Reading | null }) {
           const exporting = w < 0;
           return (
             <div key={i}>
-              <div className="flex items-baseline justify-between text-sm">
-                <span className="text-muted">
-                  L{i + 1}
-                  {p.voltage != null && (
-                    <span className="tabular ml-2 text-subtle">
-                      {Math.round(p.voltage)} V{p.current != null && ` · ${num(p.current, 0)} A`}
-                    </span>
-                  )}
-                </span>
-                <span className={cn("tabular font-semibold", exporting && "text-export")}>
+              <div className="flex items-baseline justify-between gap-3 text-sm">
+                <span className="font-medium text-muted">L{i + 1}</span>
+                <span className={cn("tabular whitespace-nowrap font-semibold", exporting && "text-export")}>
                   {exporting && "−"}
                   {kw(Math.abs(w))} kW
                 </span>
@@ -405,6 +398,16 @@ function PhasesCard({ reading }: { reading: Reading | null }) {
                   style={{ width: `${Math.max(pct, w === 0 ? 0 : 1.5)}%` }}
                 />
               </div>
+              {(p.voltage != null || p.current != null) && (
+                <div className="tabular mt-1.5 text-xs text-subtle">
+                  {[
+                    p.voltage != null && `${num(p.voltage, 0)} V`,
+                    p.current != null && `${num(p.current, 0)} A`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              )}
             </div>
           );
         })}

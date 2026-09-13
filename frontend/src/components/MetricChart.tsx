@@ -36,13 +36,16 @@ function useSelection(storageKey: string, fallback: string[], catalog: MetricDef
     return fallback;
   });
 
-  const update = (next: string[]) => {
-    setSelected(next);
-    try {
-      localStorage.setItem(key, JSON.stringify(next));
-    } catch {
-      /* storage unavailable */
-    }
+  const update = (change: (current: string[]) => string[]) => {
+    setSelected((current) => {
+      const next = change(current);
+      try {
+        localStorage.setItem(key, JSON.stringify(next));
+      } catch {
+        /* storage unavailable */
+      }
+      return next;
+    });
   };
   return [selected, update] as const;
 }
@@ -112,7 +115,7 @@ export function MetricChart({
                   key={m.id}
                   type="button"
                   aria-pressed={on}
-                  onClick={() => setSelected(toggleMetric(selected, m.id, catalog))}
+                  onClick={() => setSelected((current) => toggleMetric(current, m.id, catalog))}
                   className={cn(
                     "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition",
                     on
