@@ -12,6 +12,8 @@ Environment=JOULEFLOW_PORT=80
 EnvironmentFile=-/etc/jouleflow.env
 ExecStart=@REPO@/backend/.venv/bin/jouleflow
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+# Keep the database, keys and setup code private to the service user.
+UMask=0077
 Restart=always
 RestartSec=5
 

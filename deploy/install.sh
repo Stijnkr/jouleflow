@@ -21,7 +21,10 @@ fi
 
 echo "==> Data directory"
 sudo mkdir -p /var/lib/jouleflow
-sudo chown "$USER": /var/lib/jouleflow
+sudo chown -R "$USER": /var/lib/jouleflow
+# Settings, encrypted secrets and the database are private to the service user.
+chmod 700 /var/lib/jouleflow
+find /var/lib/jouleflow -type f -exec chmod 600 {} +
 
 if [ ! -f /etc/jouleflow.env ]; then
   echo "==> Creating /etc/jouleflow.env"
@@ -39,4 +42,15 @@ sudo systemctl daemon-reload
 sudo systemctl enable jouleflow >/dev/null
 sudo systemctl restart jouleflow
 
+for _ in $(seq 1 20); do
+  systemctl is-active --quiet jouleflow && break
+  sleep 1
+done
+sleep 2
+if [ -f /var/lib/jouleflow/setup-code ]; then
+  echo
+  echo "==> Create your Jouleflow account at http://$(hostname).local"
+  echo "    Setup code: $(cat /var/lib/jouleflow/setup-code)"
+  echo
+fi
 echo "==> Done. Open http://$(hostname).local"

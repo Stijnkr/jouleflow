@@ -240,6 +240,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
+    if (res.status === 401 && !path.startsWith("/api/auth/")) {
+      // Session expired or signed out elsewhere: let the app show the login screen.
+      window.dispatchEvent(new Event("jouleflow:unauthorized"));
+    }
     const detail = Array.isArray(body?.detail) ? t("contract.invalid") : body?.detail;
     throw new Error(detail ?? `${res.status} ${res.statusText}`);
   }
@@ -248,7 +252,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const get = <T,>(path: string) => request<T>(path);
 
+export type AuthStatus = { setup_required: boolean; authenticated: boolean; username: string | null };
+
 export const api = {
+  authStatus: () => get<AuthStatus>("/api/auth/status"),
+  login: (username: string, password: string) =>
+    request<AuthStatus>("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+  setup: (username: string, password: string, setup_code: string) =>
+    request<AuthStatus>("/api/auth/setup", {
+      method: "POST",
+      body: JSON.stringify({ username, password, setup_code }),
+    }),
+  logout: () => request<AuthStatus>("/api/auth/logout", { method: "POST" }),
+  changePassword: (current: string, next: string) =>
+    request<{ ok: boolean }>("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ current, new: next }),
+    }),
   live: () => get<LiveResponse>("/api/live"),
   summary: () => get<Summary>("/api/summary"),
   series: (range: PowerRange) => get<Series>(`/api/series?range=${range}`),

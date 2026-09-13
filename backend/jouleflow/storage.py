@@ -19,6 +19,7 @@ stay exact even across gaps in the data.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -129,9 +130,13 @@ class Storage:
     def __init__(self, path: Path, timezone: str = "Europe/Amsterdam") -> None:
         self.path = path
         self.tz = ZoneInfo(timezone)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._lock = threading.Lock()
         self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        # The database holds settings and encrypted secrets: keep it private to this user.
+        for private in (path.parent, path):
+            with contextlib.suppress(OSError):
+                private.chmod(0o700 if private.is_dir() else 0o600)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(
             """

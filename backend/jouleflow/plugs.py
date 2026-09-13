@@ -1,8 +1,9 @@
 """Smart plugs with energy monitoring (TP-Link Tapo P110/P115 and similar Kasa devices).
 
 Plugs are polled locally with python-kasa. Tapo plugs authenticate with the owner's
-TP-Link account, which the user enters in the web app; the password is stored in the
-local database and never returned by the API.
+TP-Link account, which the user enters in the web app. The password is stored encrypted
+(see `SecretBox`), never returned by the API, and only ever sent to plug addresses that
+were saved together with it.
 
 Readings are stored every poll (`plug_samples`, kept `raw_retention_days`) and rolled up
 into hourly rows (`plug_agg_1h`, kept forever). Energy is integrated from power, because
@@ -23,6 +24,7 @@ from kasa import Credentials, Device, Discover, Module
 from kasa.exceptions import AuthenticationError, KasaException
 from pydantic import BaseModel, Field
 
+from .security import SecretBox
 from .storage import Storage
 
 log = logging.getLogger(__name__)
@@ -140,13 +142,18 @@ async def probe(host: str, username: str, password: str) -> dict:
         await device.disconnect()
 
 
+class CredentialsRequired(ValueError):
+    """Raised when a change would send the stored password somewhere new."""
+
+
 class PlugManager:
-    def __init__(self, storage: Storage, raw_retention_days: int) -> None:
+    def __init__(self, storage: Storage, raw_retention_days: int, secrets: SecretBox) -> None:
         self.storage = storage
         self.raw_retention_days = raw_retention_days
+        self.secrets = secrets
         with storage._lock:  # noqa: SLF001 - one-off schema setup
             storage._db.executescript(SCHEMA)  # noqa: SLF001
-        self.settings = PlugSettings.model_validate(storage.get_setting("plugs") or {})
+        self.settings = self._load_settings()
         self.states: dict[str, PlugState] = {}
         self._devices: dict[str, Device] = {}
         self._task: asyncio.Task | None = None
@@ -154,6 +161,23 @@ class PlugManager:
         self._sync_states()
 
     # ------------------------------------------------------------------ settings
+
+    def _load_settings(self) -> PlugSettings:
+        stored = dict(self.storage.get_setting("plugs") or {})
+        if stored.get("password"):
+            # Older installs stored the password in plain text: encrypt it now.
+            stored["password_enc"] = self.secrets.encrypt(stored.pop("password"))
+            self.storage.set_setting("plugs", stored)
+        password = self.secrets.decrypt(stored.pop("password_enc", ""))
+        return PlugSettings.model_validate({**stored, "password": password})
+
+    def _save_settings(self) -> None:
+        data = self.settings.model_dump(exclude={"password"})
+        data["password_enc"] = self.secrets.encrypt(self.settings.password)
+        self.storage.set_setting("plugs", data)
+
+    def saved_hosts(self) -> set[str]:
+        return {p.host.strip() for p in self.settings.plugs}
 
     def public_settings(self) -> dict:
         return {
@@ -163,11 +187,17 @@ class PlugManager:
         }
 
     async def update_settings(self, update: PlugSettingsUpdate) -> None:
+        if update.password is None and self.settings.password:
+            new_hosts = {p.host.strip() for p in update.plugs} - self.saved_hosts()
+            if new_hosts or update.username.strip() != self.settings.username:
+                # Keeping the stored password is only allowed for addresses it was
+                # already used with; otherwise it could be sent to any device.
+                raise CredentialsRequired("password_required")
         password = self.settings.password if update.password is None else update.password
         self.settings = PlugSettings(
-            username=update.username, password=password, plugs=update.plugs
+            username=update.username.strip(), password=password, plugs=update.plugs
         )
-        await asyncio.to_thread(self.storage.set_setting, "plugs", self.settings.model_dump())
+        await asyncio.to_thread(self._save_settings)
         async with self._lock:
             await self._disconnect_all()
             self._sync_states()

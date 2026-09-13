@@ -1,10 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Gauge, Plug as PlugIcon, Receipt } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, ChevronRight, CircleAlert, Gauge, LogOut, Plug as PlugIcon, Receipt } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router";
-import { Card, CardHeader, PageHeader, Row, Segmented, StatusDot } from "../components/ui";
+import { Button, Card, CardHeader, PageHeader, Row, Segmented, StatusDot, TextField } from "../components/ui";
 import { api } from "../lib/api";
 import { bytes, duration, isoToDate, longDate, number } from "../lib/format";
-import { LANGUAGES, t, useI18n, type Lang } from "../lib/i18n";
+import { LANGUAGES, t, tDynamic, useI18n, type Lang } from "../lib/i18n";
 import { useTheme, type ThemeSetting } from "../lib/theme";
 
 export function SettingsPage() {
@@ -82,6 +83,8 @@ export function SettingsPage() {
           </div>
         </Card>
 
+        <AccountCard />
+
         <Card>
           <CardHeader title={t("settings.appearance")} />
           <div className="flex items-center justify-between gap-4 px-5 py-5 sm:px-6">
@@ -143,5 +146,71 @@ export function SettingsPage() {
         </Card>
       </div>
     </>
+  );
+}
+
+function AccountCard() {
+  const queryClient = useQueryClient();
+  const { data: status } = useQuery({ queryKey: ["auth"], queryFn: api.authStatus });
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [repeat, setRepeat] = useState("");
+
+  const logout = useMutation({
+    mutationFn: api.logout,
+    onSuccess: () => queryClient.resetQueries(),
+  });
+  const change = useMutation({
+    mutationFn: () => api.changePassword(current, next),
+    onSuccess: () => {
+      setCurrent("");
+      setNext("");
+      setRepeat("");
+    },
+  });
+  const mismatch = repeat.length > 0 && next !== repeat;
+
+  return (
+    <Card>
+      <CardHeader
+        title={t("auth.account")}
+        description={status?.username ? t("auth.signedInAs", { username: status.username }) : undefined}
+        action={
+          <Button type="button" onClick={() => logout.mutate()} disabled={logout.isPending}>
+            <LogOut className="size-4" /> {t("auth.signOut")}
+          </Button>
+        }
+      />
+      <form
+        className="flex flex-col gap-4 p-5 sm:p-6"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!mismatch) change.mutate();
+        }}
+      >
+        <span className="text-sm font-medium">{t("auth.changePassword")}</span>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <TextField id="pw-current" type="password" autoComplete="current-password" label={t("auth.currentPassword")} value={current} onChange={(e) => setCurrent(e.target.value)} />
+          <TextField id="pw-new" type="password" autoComplete="new-password" label={t("auth.newPassword")} help={t("auth.passwordHelp")} value={next} onChange={(e) => setNext(e.target.value)} />
+          <TextField id="pw-repeat" type="password" autoComplete="new-password" label={t("auth.passwordRepeat")} value={repeat} onChange={(e) => setRepeat(e.target.value)} />
+        </div>
+        <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
+          {(mismatch || change.isError) && (
+            <span className="flex items-center gap-1.5 text-sm text-import sm:mr-auto">
+              <CircleAlert className="size-4" />
+              {mismatch ? t("auth.mismatch") : tDynamic(`auth.error.${change.error?.message}`, change.error?.message ?? "")}
+            </span>
+          )}
+          {change.isSuccess && (
+            <span className="flex items-center gap-1.5 text-sm text-export sm:mr-auto">
+              <Check className="size-4" /> {t("auth.passwordChanged")}
+            </span>
+          )}
+          <Button type="submit" disabled={!current || next.length < 10 || mismatch || change.isPending}>
+            {t("auth.changePassword")}
+          </Button>
+        </div>
+      </form>
+    </Card>
   );
 }

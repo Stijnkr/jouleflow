@@ -10,9 +10,9 @@ from dataclasses import asdict
 from datetime import date, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -28,8 +28,9 @@ from .drivers import (
     get_driver,
     list_drivers,
 )
-from .plugs import PlugManager, PlugSettingsUpdate
+from .plugs import CredentialsRequired, PlugManager, PlugSettingsUpdate, _error_code
 from .plugs import probe as probe_plug
+from .security import SESSION_COOKIE, SESSION_DAYS, Auth, SecretBox
 from .storage import Storage
 from .tariffs import TariffSettings
 
@@ -80,6 +81,30 @@ class P1Config(BaseModel):
     options: dict[str, str] = Field(default_factory=dict)
 
 
+class Credentials(BaseModel):
+    username: str
+    password: str
+
+
+class Setup(Credentials):
+    setup_code: str
+
+
+class PasswordChange(BaseModel):
+    current: str
+    new: str
+
+
+class PlugTest(BaseModel):
+    host: str
+    username: str | None = None
+    password: str | None = None
+
+
+class PlugPower(BaseModel):
+    on: bool
+
+
 def initial_p1_config(storage: Storage, cfg: Settings) -> P1Config | None:
     """Saved settings win; otherwise fall back to JOULEFLOW_P1_URL for first-time setups."""
     saved = storage.get_setting("p1")
@@ -110,7 +135,8 @@ def create_app(cfg: Settings = settings) -> FastAPI:
         minute_retention_days=cfg.minute_retention_days,
     )
 
-    plugs = PlugManager(storage, cfg.raw_retention_days)
+    auth = Auth(storage, cfg.data_dir)
+    plugs = PlugManager(storage, cfg.raw_retention_days, SecretBox(cfg.data_dir / "secret.key"))
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -128,6 +154,98 @@ def create_app(cfg: Settings = settings) -> FastAPI:
 
     app = FastAPI(title="Jouleflow", version=__version__, lifespan=lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+    # ------------------------------------------------------------------ authentication
+
+    public_api = {"/api/auth/status", "/api/auth/login", "/api/auth/setup"}
+
+    @app.middleware("http")
+    async def require_login(request: Request, call_next):  # noqa: ANN202
+        path = request.url.path
+        if path.startswith("/api/"):
+            # Reject cross-site requests that change something (defence in depth next to
+            # the SameSite cookie).
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                origin = request.headers.get("origin")
+                host = request.headers.get("host")
+                if origin and host and origin.split("://", 1)[-1] != host:
+                    return JSONResponse({"detail": "cross_origin"}, status_code=403)
+            if path not in public_api and not auth.session_user(
+                request.cookies.get(SESSION_COOKIE)
+            ):
+                return JSONResponse({"detail": "not_authenticated"}, status_code=401)
+        return await call_next(request)
+
+    def set_session_cookie(response: Response, request: Request, token: str) -> None:
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            max_age=SESSION_DAYS * 86400,
+            httponly=True,
+            samesite="strict",
+            secure=request.url.scheme == "https",
+            path="/",
+        )
+
+    def client_address(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    def auth_error(exc: Exception) -> HTTPException:
+        code = str(exc)
+        status = 429 if code == "too_many_attempts" else 400 if isinstance(exc, ValueError) else 401
+        return HTTPException(status, code)
+
+    @app.get("/api/auth/status")
+    async def auth_status(request: Request) -> dict:
+        user = auth.session_user(request.cookies.get(SESSION_COOKIE))
+        return {
+            "setup_required": not auth.has_account(),
+            "authenticated": user is not None,
+            "username": user,
+        }
+
+    @app.post("/api/auth/setup")
+    async def auth_setup(body: Setup, request: Request, response: Response) -> dict:
+        try:
+            await asyncio.to_thread(
+                auth.create_account, body.username, body.password, body.setup_code
+            )
+            token = await asyncio.to_thread(
+                auth.login, body.username, body.password, client_address(request)
+            )
+        except (PermissionError, ValueError) as exc:
+            raise auth_error(exc) from exc
+        set_session_cookie(response, request, token)
+        return {"authenticated": True, "username": body.username.strip()}
+
+    @app.post("/api/auth/login")
+    async def auth_login(body: Credentials, request: Request, response: Response) -> dict:
+        try:
+            token = await asyncio.to_thread(
+                auth.login, body.username, body.password, client_address(request)
+            )
+        except PermissionError as exc:
+            raise auth_error(exc) from exc
+        set_session_cookie(response, request, token)
+        return {"authenticated": True, "username": body.username.strip()}
+
+    @app.post("/api/auth/logout")
+    async def auth_logout(request: Request, response: Response) -> dict:
+        auth.logout(request.cookies.get(SESSION_COOKIE))
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return {"authenticated": False}
+
+    @app.post("/api/auth/password")
+    async def auth_password(body: PasswordChange, request: Request, response: Response) -> dict:
+        try:
+            await asyncio.to_thread(auth.change_password, body.current, body.new)
+            token = await asyncio.to_thread(
+                auth.login, auth.username() or "", body.new, client_address(request)
+            )
+        except (PermissionError, ValueError) as exc:
+            raise auth_error(exc) from exc
+        set_session_cookie(response, request, token)
+        return {"ok": True}
 
     def p1_status() -> dict:
         if collector.driver is None:
@@ -245,23 +363,28 @@ def create_app(cfg: Settings = settings) -> FastAPI:
 
     @app.put("/api/plugs/settings")
     async def save_plug_settings(update: PlugSettingsUpdate) -> dict:
-        await plugs.update_settings(update)
+        try:
+            await plugs.update_settings(update)
+        except CredentialsRequired as exc:
+            raise HTTPException(400, "password_required") from exc
         return plugs.public_settings()
-
-    class PlugTest(BaseModel):
-        host: str
-        username: str | None = None
-        password: str | None = None
 
     @app.post("/api/plugs/test")
     async def test_plug(body: PlugTest) -> dict:
-        username = body.username if body.username is not None else plugs.settings.username
-        password = body.password if body.password is not None else plugs.settings.password
+        host = body.host.strip()
+        if body.password:
+            username, password = (body.username or "").strip(), body.password
+        else:
+            # The stored password is only used for addresses it was saved with, so it
+            # can't be sent to an arbitrary device.
+            if host not in plugs.saved_hosts() or (
+                body.username is not None and body.username.strip() != plugs.settings.username
+            ):
+                return {"ok": False, "code": "password_required", "error": "password_required"}
+            username, password = plugs.settings.username, plugs.settings.password
         try:
-            found = await asyncio.wait_for(probe_plug(body.host.strip(), username, password), 20)
+            found = await asyncio.wait_for(probe_plug(host, username, password), 20)
         except Exception as exc:  # noqa: BLE001 - report any failure to the user
-            from .plugs import _error_code
-
             return {
                 "ok": False,
                 "code": _error_code(exc),
@@ -283,9 +406,6 @@ def create_app(cfg: Settings = settings) -> FastAPI:
             }
             for host, device in found.items()
         ]
-
-    class PlugPower(BaseModel):
-        on: bool
 
     @app.post("/api/plugs/{plug_id}/power")
     async def plug_power(plug_id: str, body: PlugPower) -> dict:
@@ -347,6 +467,9 @@ def create_app(cfg: Settings = settings) -> FastAPI:
 
     @app.websocket("/api/ws")
     async def ws(socket: WebSocket) -> None:
+        if not auth.session_user(socket.cookies.get(SESSION_COOKIE)):
+            await socket.close(code=4401)
+            return
         await socket.accept()
         last_ts = None
         try:
@@ -376,6 +499,8 @@ def create_app(cfg: Settings = settings) -> FastAPI:
 def run() -> None:
     import uvicorn
 
+    # Files created by Jouleflow (database, WAL, keys) are private to the service user.
+    os.umask(0o077)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )

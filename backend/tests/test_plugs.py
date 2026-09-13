@@ -2,14 +2,15 @@ import asyncio
 
 import pytest
 
-from jouleflow.plugs import PlugConfig, PlugManager, PlugSettingsUpdate
+from jouleflow.plugs import CredentialsRequired, PlugConfig, PlugManager, PlugSettingsUpdate
+from jouleflow.security import SecretBox
 from jouleflow.storage import Storage
 
 
 @pytest.fixture
 def manager(tmp_path):
     storage = Storage(tmp_path / "plugs.db")
-    manager = PlugManager(storage, raw_retention_days=7)
+    manager = PlugManager(storage, raw_retention_days=7, secrets=SecretBox(tmp_path / "secret.key"))
     yield manager
     storage.close()
 
@@ -68,3 +69,45 @@ def test_gaps_are_not_counted_as_energy(manager):
     manager.rollup(hour + 3600)
     energy = manager.storage.query_one("SELECT energy FROM plug_agg_1h")["energy"]
     assert energy == pytest.approx(1000 * 120 / 3_600_000, abs=1e-4)
+
+
+def test_password_is_encrypted_and_only_reused_for_saved_addresses(manager):
+    boiler = PlugConfig(host="192.168.3.15", name="Boiler")
+    asyncio.run(
+        manager.update_settings(
+            PlugSettingsUpdate(username="me@example.com", password="secret", plugs=[boiler])
+        )
+    )
+    raw = manager.storage.query_one("SELECT value FROM meta WHERE key = 'setting:plugs'")["value"]
+    assert "secret" not in raw and "password_enc" in raw
+
+    # A new address without re-entering the password is refused.
+    other = PlugConfig(host="192.168.3.99", name="Evil")
+    with pytest.raises(CredentialsRequired):
+        asyncio.run(
+            manager.update_settings(
+                PlugSettingsUpdate(username="me@example.com", plugs=[boiler, other])
+            )
+        )
+    # So is changing the account name.
+    with pytest.raises(CredentialsRequired):
+        asyncio.run(
+            manager.update_settings(PlugSettingsUpdate(username="x@example.com", plugs=[boiler]))
+        )
+    # Re-entering the password allows it.
+    asyncio.run(
+        manager.update_settings(
+            PlugSettingsUpdate(username="me@example.com", password="secret", plugs=[boiler, other])
+        )
+    )
+    assert manager.saved_hosts() == {"192.168.3.15", "192.168.3.99"}
+
+
+def test_plain_text_password_from_older_versions_is_encrypted_on_load(tmp_path):
+    storage = Storage(tmp_path / "old.db")
+    storage.set_setting("plugs", {"username": "me@example.com", "password": "secret", "plugs": []})
+    manager = PlugManager(storage, 7, SecretBox(tmp_path / "secret.key"))
+    assert manager.settings.password == "secret"
+    raw = storage.query_one("SELECT value FROM meta WHERE key = 'setting:plugs'")["value"]
+    assert "secret" not in raw
+    storage.close()

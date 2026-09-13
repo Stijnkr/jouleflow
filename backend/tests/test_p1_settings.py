@@ -11,6 +11,12 @@ from jouleflow.storage import Storage
 def client(tmp_path):
     app = create_app(Settings(data_dir=tmp_path, frontend_dir=None, p1_url=None))
     with TestClient(app) as c:
+        code = (tmp_path / "setup-code").read_text().strip()
+        response = c.post(
+            "/api/auth/setup",
+            json={"username": "owner", "password": "long enough password", "setup_code": code},
+        )
+        assert response.status_code == 200
         yield c
 
 

@@ -105,6 +105,9 @@ export function PlugSettingsPage() {
       >
         <Card>
           <CardHeader title={t("plugs.account")} description={t("plugs.accountDescription")} />
+          <p className="mx-5 mt-4 rounded-lg bg-muted-surface px-4 py-3 text-[13px] text-muted sm:mx-6">
+            {t("plugs.securityNote")}
+          </p>
           <div className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
             <label className="flex flex-col gap-2">
               <span className="text-sm font-medium">{t("plugs.email")}</span>
@@ -232,7 +235,9 @@ export function PlugSettingsPage() {
                             state: result.is_on ? t("plugs.on") : t("plugs.off"),
                             power: result.power != null ? ` · ${powerText(result.power)}` : "",
                           })
-                        : tDynamic(`plugs.error.${result.code}`, result.error)}
+                        : result.code === "password_required"
+                          ? t("plugs.passwordRequired")
+                          : tDynamic(`plugs.error.${result.code}`, result.error)}
                     </p>
                   )}
                 </div>
@@ -250,7 +255,8 @@ export function PlugSettingsPage() {
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-end">
           {save.isError && (
             <span className="flex items-center gap-1.5 text-sm text-import sm:mr-auto">
-              <CircleAlert className="size-4" /> {save.error.message}
+              <CircleAlert className="size-4" />{" "}
+              {save.error.message === "password_required" ? t("plugs.passwordRequired") : save.error.message}
             </span>
           )}
           {saved && (
