@@ -42,15 +42,18 @@ sudo systemctl daemon-reload
 sudo systemctl enable jouleflow >/dev/null
 sudo systemctl restart jouleflow
 
-for _ in $(seq 1 20); do
-  systemctl is-active --quiet jouleflow && break
+# Wait until the service has started and created its certificates (or setup code).
+for _ in $(seq 1 30); do
+  if systemctl is-active --quiet jouleflow && [ -f /var/lib/jouleflow/tls/ca.crt ]; then
+    break
+  fi
   sleep 1
 done
-sleep 2
-if [ -f /var/lib/jouleflow/setup-code ]; then
+sleep 1
+if sudo test -f /var/lib/jouleflow/setup-code; then
   echo
   echo "==> Create your Jouleflow account at https://$(hostname).local"
-  echo "    Setup code: $(cat /var/lib/jouleflow/setup-code)"
+  echo "    Setup code: $(sudo cat /var/lib/jouleflow/setup-code)"
   echo
 fi
 if [ -f /var/lib/jouleflow/tls/ca.crt ]; then
