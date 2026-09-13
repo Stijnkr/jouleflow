@@ -11,6 +11,13 @@ echo "==> Backend dependencies"
 
 echo "==> Building web app"
 (cd "$REPO/frontend" && npm ci --no-audit --no-fund && npm run build)
+# Flush to the SD card before restarting, and refuse to continue with a broken build
+# (an interrupted write can leave empty files behind).
+sync
+if [ ! -s "$REPO/frontend/dist/index.html" ] || [ -z "$(find "$REPO/frontend/dist/assets" -name '*.js' -size +1k)" ]; then
+  echo "Web app build is empty or incomplete. Run this script again." >&2
+  exit 1
+fi
 
 echo "==> Data directory"
 sudo mkdir -p /var/lib/jouleflow
