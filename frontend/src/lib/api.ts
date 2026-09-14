@@ -166,6 +166,8 @@ export type Inverter = {
   last_update: number | null;
   error: string | null;
   error_code: "no_response" | "timeout" | "connect" | null;
+  /** Unreachable because there is no sun (rather than a fault or network problem). */
+  asleep: boolean;
   status?: string;
   power: number | null;
   pv_power?: number;

@@ -50,7 +50,7 @@ function SolarStatus() {
   const inverters = data?.inverters ?? [];
   if (!inverters.length) return null;
   const fresh = inverters.some((i) => i.fresh);
-  const asleep = !fresh && inverters.every((i) => i.error_code === "no_response" || i.fresh);
+  const asleep = !fresh && inverters.every((i) => i.asleep);
   const power = inverters.reduce((sum, i) => sum + (i.fresh ? (i.power ?? 0) : 0), 0);
   return (
     <div className="mt-3 rounded-lg border border-border p-4">

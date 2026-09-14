@@ -34,6 +34,10 @@ log = logging.getLogger(__name__)
 POLL_INTERVAL = 10.0
 POLL_INTERVAL_INT = int(POLL_INTERVAL)
 STALE_AFTER = 45.0
+# An inverter that stopped answering while producing less than this was winding down for
+# the night (Growatt gateways often lose power with the inverter); more than this and it
+# is a daytime outage, so its production is unknown rather than zero.
+ASLEEP_BELOW_W = 20.0
 # A lifetime counter that jumps by more than this per hour is treated as a glitch or reset.
 MAX_KWH_PER_HOUR = 50.0
 # Growatt counters step in 0.1 kWh. Within that margin integrated power is used instead,
@@ -186,12 +190,24 @@ class InverterState:
     error: str | None = None
     error_code: str | None = None
     reading: InverterReading | None = None
+    # Power from the last stored sample, so a restart at night still knows it's dark.
+    last_power: float | None = None
     failures: int = 0
     next_attempt: float = 0.0
 
     @property
     def display_name(self) -> str:
         return self.name or f"Growatt {self.host}"
+
+    @property
+    def asleep(self) -> bool:
+        """Unreachable because there is no sun, as far as we can tell."""
+        if self.error_code is None:
+            return False
+        if self.error_code == "no_response":
+            return True
+        last = self.reading.power if self.reading else self.last_power
+        return last is not None and last < ASLEEP_BELOW_W
 
 
 # Gaps up to this long between two readings are filled in (a missed poll or a restart),
@@ -281,11 +297,16 @@ class SolarManager:
                 inv.port,
                 inv.unit_id,
             )
-            state = (
-                previous
-                if same
-                else InverterState(inv.id, inv.name, inv.host, inv.port, inv.unit_id, inv.model)
-            )
+            if same:
+                state = previous
+            else:
+                state = InverterState(inv.id, inv.name, inv.host, inv.port, inv.unit_id, inv.model)
+                row = self.storage.query_one(
+                    "SELECT power FROM solar_samples WHERE inverter_id = ? "
+                    "ORDER BY ts DESC LIMIT 1",
+                    (inv.id,),
+                )
+                state.last_power = row["power"] if row else None
             state.name = inv.name
             state.failures, state.next_attempt = 0, 0.0
             states[inv.id] = state
@@ -679,12 +700,11 @@ class SolarManager:
                     "last_update": state.last_update,
                     "error": state.error,
                     "error_code": state.error_code,
+                    "asleep": not fresh and state.asleep,
                     **reading,
                     # Asleep (no answer, as Growatt does at night) means 0 W; unreachable
                     # for another reason means we simply don't know.
-                    "power": reading.get("power")
-                    if fresh
-                    else (0.0 if state.error_code == "no_response" else None),
+                    "power": reading.get("power") if fresh else (0.0 if state.asleep else None),
                 }
             )
         return out

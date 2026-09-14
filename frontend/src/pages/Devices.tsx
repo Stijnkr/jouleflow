@@ -199,7 +199,7 @@ function InverterCard({ inverter }: { inverter: Inverter }) {
               <StatusDot ok={inverter.fresh} />
               {inverter.fresh
                 ? tDynamic(`solar.status.${inverter.status}`, inverter.status ?? "")
-                : inverter.error_code === "no_response"
+                : inverter.asleep
                   ? t("solar.asleep")
                   : t("common.offline")}
             </span>

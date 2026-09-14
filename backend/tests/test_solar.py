@@ -217,3 +217,16 @@ def test_an_unreachable_inverter_reports_unknown_power_and_a_sleeping_one_zero(m
     assert manager.public_states()[0]["power"] == 0.0
     state.error_code = "connect"
     assert manager.public_states()[0]["power"] is None
+    # Lost while winding down at dusk: the gateway went off with the inverter.
+    state.reading = parse_growatt([MIC_REGISTERS[i] for i in range(95)])
+    state.reading.power = 3.0
+    assert manager.public_states()[0]["asleep"] is True
+    assert manager.public_states()[0]["power"] == 0.0
+    state.reading.power = 800.0
+    assert manager.public_states()[0]["power"] is None
+    # After a restart at night the last stored sample tells the same story.
+    insert(manager, 1_789_300_800, 10, power=2.0, total_from=2000.0, total_to=2000.0)
+    manager.settings.inverters = [InverterConfig(id="mic", host="192.168.1.100", port=503)]
+    manager._sync_states()
+    manager.states["mic"].error_code = "connect"
+    assert manager.public_states()[0]["asleep"] is True
