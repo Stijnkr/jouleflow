@@ -163,3 +163,57 @@ def test_series_summary_and_history_gain_solar_and_consumption(manager):
     assert noon_bar[6] == pytest.approx(0.2, abs=0.01)
     assert noon_bar[7] == pytest.approx(noon_bar[1] + noon_bar[6], abs=1e-3)
     assert history["bars"][3][6] is None
+
+
+def test_partial_hours_and_the_current_bucket_are_pro_rated(manager):
+    from jouleflow.solar import average_into_buckets
+
+    hour = 1_789_300_800
+    insert(manager, hour, 3599, power=1000, total_from=2000.0, total_to=2001.0)
+    manager.rollup(hour + 3600)
+    # Half of a rolled hour counts for half.
+    assert manager.energy_between(hour, hour + 1800)["mic"] == pytest.approx(0.5, abs=0.01)
+    assert manager.energy_between(hour + 1200, hour + 3600)["mic"] == pytest.approx(0.67, abs=0.01)
+    # Three minutes into a 15-minute bucket the average covers those three minutes only.
+    points = [(hour + i * 60, 1000.0) for i in range(3)]
+    assert average_into_buckets(points, 60, [hour], 900, since=hour, now=hour + 180) == [1000.0]
+    assert average_into_buckets(points, 60, [hour], 900, since=hour) == [200.0]
+
+
+def test_series_from_rollups_still_shows_the_current_hour(manager):
+    hour = 1_789_300_800
+    insert(manager, hour, 3599, power=1000, total_from=2000.0, total_to=2001.0)
+    manager.rollup(hour + 3600)
+    insert(manager, hour + 3600, 600, power=1500, total_from=2001.0, total_to=2001.25)
+    # Pretend the raw samples of the first hour have expired: only the rollup remains.
+    with manager.storage._lock:
+        manager.storage._db.execute("DELETE FROM solar_samples WHERE ts < ?", (hour + 3600,))
+    points, res = manager.power_points(hour, hour + 7200, 3600)
+    assert res == 3600
+    assert [t for t, _ in points] == [hour, hour + 3600]
+    assert [w for _, w in points] == pytest.approx([1000, 1500], abs=5)
+
+
+def test_periods_before_the_panels_existed_have_no_solar_figure(manager):
+    from datetime import date
+
+    from jouleflow import queries
+    from tests.test_storage import local_ts, make_readings
+
+    day = local_ts(2026, 9, 13)
+    manager.storage.insert_samples(make_readings(day + 8 * 3600, 600, import_w=500))
+    insert(manager, day + 12 * 3600, 600, power=1000, total_from=2000.0, total_to=2000.2)
+    manager.storage.rollup_all(day + 13 * 3600)
+    history = manager.add_to_history(queries.history(manager.storage, "day", date(2026, 9, 13)))
+    assert history["bars"][8][6] is None  # before the first solar sample
+    assert history["bars"][12][6] == pytest.approx(1000 * 600 / 3_600_000, abs=0.01)
+    yesterday = manager.add_to_history(queries.history(manager.storage, "day", date(2026, 9, 12)))
+    assert yesterday["totals"]["solar"] is None
+
+
+def test_an_unreachable_inverter_reports_unknown_power_and_a_sleeping_one_zero(manager):
+    state = manager.states["mic"]
+    state.error_code = "no_response"
+    assert manager.public_states()[0]["power"] == 0.0
+    state.error_code = "connect"
+    assert manager.public_states()[0]["power"] is None

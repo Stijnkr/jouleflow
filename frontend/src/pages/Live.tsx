@@ -31,12 +31,15 @@ const RANGE_LABEL = {
   week: "live.rangeWeek",
 } as const;
 
-function useSolarNow() {
+/** Current solar power: the sum of what the inverters report. null when one of them is
+ * unreachable for a reason other than sleeping, since then we don't know. */
+function useSolarNow(): { hasSolar: boolean; solarW: number | null } {
   const { data } = useQuery({ queryKey: ["inverters"], queryFn: api.inverters, refetchInterval: 5000 });
   const inverters = data?.inverters ?? [];
+  const unknown = inverters.some((i) => i.power == null);
   return {
     hasSolar: inverters.length > 0,
-    solarW: inverters.reduce((sum, i) => sum + (i.fresh ? (i.power ?? 0) : 0), 0),
+    solarW: unknown ? null : inverters.reduce((sum, i) => sum + (i.power ?? 0), 0),
   };
 }
 
@@ -96,7 +99,7 @@ function FlowCard({
   reading: Reading | null;
   summary?: Summary;
   hasSolar: boolean;
-  solarW: number;
+  solarW: number | null;
 }) {
   const [mode, setMode] = useState<"now" | "today">("now");
   const values =
@@ -149,6 +152,7 @@ function TodayCard({ summary, hasSolar }: { summary?: Summary; hasSolar: boolean
       <EnergyBalance
         flow={flow}
         hasSolar={hasSolar && summary?.today.solar != null}
+        gasM3={summary?.today.gas}
         cost={cost?.total}
         costNote={
           cost && (

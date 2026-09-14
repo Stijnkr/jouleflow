@@ -5,10 +5,10 @@ import { Chart } from "../components/Chart";
 import { EnergyBalance } from "../components/EnergyBalance";
 import { EnergyFlow, energyFlow, flowSentence } from "../components/EnergyFlow";
 import { MetricChart } from "../components/MetricChart";
-import { Card, CardHeader, cn, IconButton, PageHeader, Segmented, Value } from "../components/ui";
-import { api, type Cost, type FeedInSummary, type History, type Period } from "../lib/api";
+import { Card, CardHeader, cn, IconButton, PageHeader, Segmented } from "../components/ui";
+import { api, type FeedInSummary, type History, type Period } from "../lib/api";
 import { energyBarsOption } from "../lib/charts";
-import { energy, euro, isoDate, isoToDate, kw, longDate, monthName, powerText, shortDate, time, weekday } from "../lib/format";
+import { energy, euro, isoDate, isoToDate, longDate, monthName, shortDate, time, weekday } from "../lib/format";
 import { t } from "../lib/i18n";
 import { DEFAULT_P1_SELECTION, P1_METRICS } from "../lib/metrics";
 import type { MessageKey } from "../locales/en";
@@ -135,91 +135,55 @@ export function HistoryPage() {
           query.isPlaceholderData && "opacity-60",
         )}
       >
-        {withSolar && h ? (
-          <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(320px,2fr)]">
-            <Card className="px-5 pt-5 pb-5 sm:px-6 sm:pt-6">
-              <h2 className="text-[15px] font-semibold tracking-tight">{t("flow.title")}</h2>
-              <p className="mt-3 max-w-[52ch] text-lg leading-snug font-medium tracking-tight text-balance sm:text-xl">
-                {flowSentence(periodFlow, "kWh", true)}
+        <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(320px,2fr)]">
+          <Card className="px-5 pt-5 pb-5 sm:px-6 sm:pt-6">
+            <h2 className="text-[15px] font-semibold tracking-tight">{t("flow.title")}</h2>
+            <p className="mt-3 max-w-[52ch] text-lg leading-snug font-medium tracking-tight text-balance sm:text-xl">
+              {flowSentence(periodFlow, "kWh", withSolar)}
+            </p>
+            {h?.previous.consumption != null && h.totals.consumption != null && h.previous.consumption > 0 && (
+              <p className={cn("mt-1.5 text-sm", h.totals.consumption < h.previous.consumption ? "text-export" : "text-muted")}>
+                {compare(((h.totals.consumption - h.previous.consumption) / h.previous.consumption) * 100, period)}
               </p>
-              {h.previous.consumption != null && h.totals.consumption != null && h.previous.consumption > 0 && (
-                <p
-                  className={cn(
-                    "mt-1.5 text-sm",
-                    h.totals.consumption < h.previous.consumption ? "text-export" : "text-muted",
-                  )}
-                >
-                  {compare(((h.totals.consumption - h.previous.consumption) / h.previous.consumption) * 100, period)}
-                </p>
-              )}
-              <div className="mt-4">
-                <EnergyFlow values={periodFlow} unit="kWh" hasSolar animate={false} />
-              </div>
-            </Card>
-            <Card className="flex flex-col px-5 pt-5 pb-1 sm:px-6 sm:pt-6">
-              <div className="mb-5 flex items-baseline justify-between gap-3">
-                <h2 className="text-[15px] font-semibold tracking-tight">{t("balance.keyFigures")}</h2>
-              </div>
-              <EnergyBalance
-                flow={periodFlow}
-                hasSolar
-                cost={h.totals.cost?.total}
-                costNote={
-                  h.totals.cost && (
-                    <>
-                      {t("live.costBreakdown", {
-                        energy: euro(
-                          h.totals.cost.import - h.totals.cost.export_credit + h.totals.cost.export_cost + h.totals.cost.gas,
-                        ),
-                        fixed: euro(h.totals.cost.fixed),
-                      })}
-                      {h.previous.cost && h.previous.cost.total > 0 && (
-                        <>
-                          <br />
-                          {compare(((h.totals.cost.total - h.previous.cost.total) / h.previous.cost.total) * 100, period)}
-                        </>
-                      )}
-                    </>
-                  )
-                }
-              />
-            </Card>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-4">
-            <TotalCard
-              label={t("history.imported")}
-              value={h?.totals.import}
-              previous={h?.previous.import}
-              period={period}
-              lowerIsGood
-              extra={
+            )}
+            <div className="mt-4">
+              <EnergyFlow values={periodFlow} unit="kWh" hasSolar={withSolar} animate={false} />
+            </div>
+          </Card>
+          <Card className="flex flex-col px-5 pt-5 pb-1 sm:px-6 sm:pt-6">
+            <h2 className="mb-5 text-[15px] font-semibold tracking-tight">{t("balance.keyFigures")}</h2>
+            <EnergyBalance
+              flow={periodFlow}
+              hasSolar={withSolar}
+              importSplit={
                 h?.totals.import_low != null
                   ? t("history.lowNormal", { low: energy(h.totals.import_low, 1), normal: energy(h.totals.import_normal, 1) })
                   : undefined
               }
+              peak={h ? { importW: h.totals.peak_import_w, exportW: h.totals.peak_export_w } : undefined}
+              gasM3={h?.totals.gas}
+              cost={h?.totals.cost?.total}
+              costNote={
+                h?.totals.cost && (
+                  <>
+                    {t("live.costBreakdown", {
+                      energy: euro(
+                        h.totals.cost.import - h.totals.cost.export_credit + h.totals.cost.export_cost + h.totals.cost.gas,
+                      ),
+                      fixed: euro(h.totals.cost.fixed),
+                    })}
+                    {h.previous.cost && h.previous.cost.total > 0 && (
+                      <>
+                        <br />
+                        {compare(((h.totals.cost.total - h.previous.cost.total) / h.previous.cost.total) * 100, period)}
+                      </>
+                    )}
+                  </>
+                )
+              }
             />
-            <TotalCard
-              label={t("history.exported")}
-              value={h?.totals.export}
-              previous={h?.previous.export}
-              period={period}
-              lowerIsGood={false}
-            />
-            {h?.totals.cost ? (
-              <CostCard cost={h.totals.cost} previous={h.previous.cost} period={period} />
-            ) : (
-              <TotalCard
-                label={t("history.netUsage")}
-                value={h?.totals.net}
-                previous={h?.previous.net}
-                period={period}
-                lowerIsGood
-              />
-            )}
-            <PeakCard h={h} />
-          </div>
-        )}
+          </Card>
+        </div>
 
         <Card>
           <CardHeader
@@ -275,81 +239,6 @@ export function HistoryPage() {
 
       </div>
     </>
-  );
-}
-
-function PeakCard({ h }: { h: History | undefined }) {
-  return (
-    <Card className="p-5 sm:p-6">
-      <div className="text-sm text-muted">{t("history.peakPower")}</div>
-      <Value className="mt-3" value={kw(h?.totals.peak_import_w)} unit="kW" />
-      <div className="tabular mt-3 text-sm text-muted">
-        {h?.totals.peak_export_w
-          ? t("history.exportPeak", { power: powerText(h.totals.peak_export_w) })
-          : t("history.highestImport")}
-      </div>
-    </Card>
-  );
-}
-
-function CostCard({ cost, previous, period }: { cost: Cost; previous: Cost | null; period: Period }) {
-  const energyCost = cost.import - cost.export_credit + cost.export_cost + cost.gas;
-  const breakdown = t("live.costBreakdown", { energy: euro(energyCost), fixed: euro(cost.fixed) });
-  let comparison: React.ReactNode = breakdown;
-  if (previous && previous.total > 0) {
-    const pct = ((cost.total - previous.total) / previous.total) * 100;
-    comparison = (
-      <span className={pct < 0 ? "text-export" : "text-import"}>{compare(pct, period)}</span>
-    );
-  }
-  return (
-    <Card className="p-5 sm:p-6">
-      <div className="text-sm text-muted">{t("history.costs")}</div>
-      <Value className="mt-3" value={euro(cost.total)} />
-      <div className="tabular mt-3 text-sm text-muted">{comparison}</div>
-      {previous && previous.total > 0 && (
-        <div className="tabular mt-1 truncate text-xs text-subtle">
-          {breakdown}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function TotalCard({
-  label,
-  value,
-  previous,
-  period,
-  lowerIsGood,
-  extra,
-}: {
-  label: string;
-  value: number | null | undefined;
-  previous: number | null | undefined;
-  period: Period;
-  lowerIsGood: boolean;
-  extra?: string;
-}) {
-  let footer: React.ReactNode = extra ?? t("compare.noData", { previous: t(PREVIOUS_LABEL[period]) });
-  if (value != null && previous) {
-    const pct = ((value - previous) / Math.abs(previous)) * 100;
-    const lower = pct < 0;
-    footer = (
-      <span className={lower === lowerIsGood ? "text-export" : "text-import"}>
-        {compare(pct, period)}
-      </span>
-    );
-  }
-  return (
-    <Card className="p-5 sm:p-6">
-      <div className="text-sm text-muted">{label}</div>
-      <Value className="mt-3" value={energy(value)} unit="kWh" />
-      <div className="tabular mt-3 text-sm text-muted">{footer}</div>
-      {extra && value != null && previous ? (
-        <div className="tabular mt-1 truncate text-xs text-subtle">{extra}</div>
-      ) : null}
-    </Card>
   );
 }
 

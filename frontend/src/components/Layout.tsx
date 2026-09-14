@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, ChartColumn, Plug, SlidersHorizontal, Zap } from "lucide-react";
 import { NavLink, Outlet } from "react-router";
 import { api } from "../lib/api";
-import { time } from "../lib/format";
+import { powerText, time } from "../lib/format";
 import { t } from "../lib/i18n";
 import { useLive, useNow } from "../lib/live";
 import { cn, StatusDot } from "./ui";
@@ -45,6 +45,30 @@ function MeterStatus() {
   );
 }
 
+function SolarStatus() {
+  const { data } = useQuery({ queryKey: ["inverters"], queryFn: api.inverters, refetchInterval: 15_000 });
+  const inverters = data?.inverters ?? [];
+  if (!inverters.length) return null;
+  const fresh = inverters.some((i) => i.fresh);
+  const asleep = !fresh && inverters.every((i) => i.error_code === "no_response" || i.fresh);
+  const power = inverters.reduce((sum, i) => sum + (i.fresh ? (i.power ?? 0) : 0), 0);
+  return (
+    <div className="mt-3 rounded-lg border border-border p-4">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <StatusDot ok={fresh || asleep} />
+        {t("status.solar")}
+      </div>
+      <p className="tabular mt-2 text-[13px] leading-relaxed text-muted">
+        {fresh
+          ? t("status.solarProducing", { power: powerText(power) })
+          : asleep
+            ? t("status.solarAsleep")
+            : t("common.offline")}
+      </p>
+    </div>
+  );
+}
+
 export function Layout() {
   return (
     <div className="flex min-h-full">
@@ -79,6 +103,7 @@ export function Layout() {
         </nav>
         <div className="mt-auto">
           <MeterStatus />
+          <SolarStatus />
         </div>
       </aside>
 

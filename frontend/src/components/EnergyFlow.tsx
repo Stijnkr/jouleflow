@@ -8,16 +8,18 @@ import { t } from "../lib/i18n";
  * physically goes: solar feeds the house first, the rest goes to the grid, and the grid
  * covers what is left. Works for power (W, now) and energy (kWh, over a period). */
 export type FlowValues = {
-  solar: number;
+  /** null when the inverter is unreachable, so production (and consumption) are unknown. */
+  solar: number | null;
   imp: number;
   exp: number;
-  home: number;
+  home: number | null;
   solarToHome: number;
 };
 
-export function powerFlow(netW: number, solarW: number): FlowValues {
+export function powerFlow(netW: number, solarW: number | null): FlowValues {
   const exp = Math.max(-netW, 0);
   const imp = Math.max(netW, 0);
+  if (solarW == null) return { solar: null, imp, exp, home: null, solarToHome: 0 };
   const home = Math.max(netW + solarW, 0);
   return { solar: solarW, imp, exp, home, solarToHome: Math.max(Math.min(solarW - exp, home), 0) };
 }
@@ -50,7 +52,7 @@ const threshold = (unit: FlowUnit) => (unit === "W" ? 5 : 0.005);
 
 /** Shares of what the house used and of what the panels produced. */
 export function ratios(v: FlowValues | null) {
-  if (!v) return { selfSufficiency: null, selfConsumption: null };
+  if (!v || v.home == null || v.solar == null) return { selfSufficiency: null, selfConsumption: null };
   return {
     selfSufficiency: v.home > 0 ? Math.min(v.solarToHome / v.home, 1) : null,
     selfConsumption: v.solar > 0 ? Math.min(v.solarToHome / v.solar, 1) : null,
@@ -61,6 +63,12 @@ export function flowSentence(v: FlowValues | null, unit: FlowUnit, hasSolar: boo
   if (!v) return t(unit === "W" ? "flow.waiting" : "flow.noData");
   const min = threshold(unit);
   const f = (x: number) => formatFlow(x, unit);
+  if (v.solar == null || v.home == null) {
+    return t(v.exp >= min ? "flow.solarUnknownExport" : "flow.solarUnknownImport", {
+      grid: f(v.imp),
+      export: f(v.exp),
+    });
+  }
   if (unit === "kWh") {
     const { selfSufficiency } = ratios(v);
     if (hasSolar && selfSufficiency != null && v.solarToHome >= min) {
@@ -95,12 +103,14 @@ const H = { x: 85, y: 70 };
 export function EnergyFlow({ values, unit, hasSolar, animate }: Props) {
   const v = values ?? { solar: 0, imp: 0, exp: 0, home: 0, solarToHome: 0 };
   const min = threshold(unit);
-  const biggest = Math.max(v.solar, v.imp, v.exp, v.home, min);
+  const solar = v.solar ?? 0;
+  const home = v.home ?? 0;
+  const biggest = Math.max(solar, v.imp, v.exp, home, min);
   // Line width follows the flow: absolute for power, relative to the largest for energy.
   const width = (x: number) =>
     unit === "W" ? 1.5 + 5.5 * Math.sqrt(Math.min(x, 6000) / 6000) : 1.5 + 5 * Math.sqrt(x / biggest);
 
-  const solarShare = v.home > 0 ? Math.min(v.solarToHome / v.home, 1) : 0;
+  const solarShare = home > 0 ? Math.min(v.solarToHome / home, 1) : 0;
   const exportShare = v.imp + v.exp > 0 ? v.exp / (v.imp + v.exp) : 0;
 
   return (
@@ -146,10 +156,10 @@ export function EnergyFlow({ values, unit, hasSolar, animate }: Props) {
           at={S}
           labelAbove
           label={t("flow.solar")}
-          ring={[{ share: 1, color: v.solar >= min ? "var(--solar)" : "var(--border)" }]}
+          ring={[{ share: 1, color: solar >= min ? "var(--solar)" : "var(--border)" }]}
         >
           <Sun className="size-5 text-solar sm:size-6" strokeWidth={1.75} />
-          <NodeValue>{values ? formatFlow(v.solar, unit) : "—"}</NodeValue>
+          <NodeValue>{values && v.solar != null ? formatFlow(v.solar, unit) : "—"}</NodeValue>
         </Node>
       ) : (
         <Link
@@ -198,7 +208,7 @@ export function EnergyFlow({ values, unit, hasSolar, animate }: Props) {
         at={H}
         label={t("flow.home")}
         ring={
-          v.home >= min
+          home >= min
             ? [
                 { share: solarShare, color: "var(--solar)" },
                 { share: 1 - solarShare, color: "var(--grid)" },
@@ -207,7 +217,7 @@ export function EnergyFlow({ values, unit, hasSolar, animate }: Props) {
         }
       >
         <Home className="size-5 text-foreground sm:size-6" strokeWidth={1.75} />
-        <NodeValue>{values ? formatFlow(v.home, unit) : "—"}</NodeValue>
+        <NodeValue>{values && v.home != null ? formatFlow(v.home, unit) : "—"}</NodeValue>
       </Node>
     </div>
   );
@@ -332,7 +342,7 @@ function FlowChip({
   if (!show) return null;
   return (
     <span
-      className="tabular absolute hidden -translate-x-1/2 -translate-y-1/2 rounded-full border border-border bg-card px-2 py-0.5 text-[11px] sm:block font-medium whitespace-nowrap text-muted"
+      className="tabular absolute hidden -translate-x-1/2 -translate-y-1/2 rounded-full border border-border bg-card px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-muted sm:block"
       style={{ left: `${x}%`, top: `${y}%` }}
     >
       {formatFlow(value, unit)}

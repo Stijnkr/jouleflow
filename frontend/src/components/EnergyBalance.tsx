@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { euro } from "../lib/format";
+import { energy, euro, powerText } from "../lib/format";
 import { t } from "../lib/i18n";
 import { formatFlow, ratios, type FlowValues } from "./EnergyFlow";
 import { cn } from "./ui";
@@ -7,16 +7,20 @@ import { cn } from "./ui";
 type Props = {
   flow: FlowValues | null;
   hasSolar: boolean;
+  /** Low/normal tariff split of the import, for dual-tariff meters. */
+  importSplit?: string;
+  peak?: { importW: number | null; exportW: number | null };
+  gasM3?: number | null;
   cost?: number | null;
   costNote?: ReactNode;
 };
 
 /** Key figures for a period: grid balance, self-sufficiency, self-consumption and cost. */
-export function EnergyBalance({ flow, hasSolar, cost, costNote }: Props) {
+export function EnergyBalance({ flow, hasSolar, importSplit, peak, gasM3, cost, costNote }: Props) {
   const { selfSufficiency, selfConsumption } = ratios(flow);
   return (
     <div className="flex flex-col divide-y divide-border">
-      <GridBalance flow={flow} />
+      <GridBalance flow={flow} importSplit={importSplit} />
       {hasSolar && (
         <div className="grid grid-cols-2 gap-4 py-5">
           <Meter
@@ -33,6 +37,27 @@ export function EnergyBalance({ flow, hasSolar, cost, costNote }: Props) {
           />
         </div>
       )}
+      {peak && peak.importW != null && (
+        <div className="py-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="text-sm font-medium text-muted">{t("history.peakPower")}</h3>
+            <span className="tabular text-lg font-semibold tracking-tight">{powerText(peak.importW)}</span>
+          </div>
+          <p className="tabular mt-1 text-[13px] text-muted">
+            {peak.exportW
+              ? t("history.exportPeak", { power: powerText(peak.exportW) })
+              : t("history.highestImport")}
+          </p>
+        </div>
+      )}
+      {gasM3 != null && gasM3 > 0 && (
+        <div className="flex items-baseline justify-between gap-3 py-4">
+          <h3 className="text-sm font-medium text-muted">{t("balance.gas")}</h3>
+          <span className="tabular text-lg font-semibold tracking-tight">
+            {energy(gasM3)} <span className="text-sm font-normal text-muted">m³</span>
+          </span>
+        </div>
+      )}
       {cost != null && (
         <div className="py-5">
           <div className="flex items-baseline justify-between gap-3">
@@ -47,7 +72,7 @@ export function EnergyBalance({ flow, hasSolar, cost, costNote }: Props) {
 }
 
 /** Import against export around zero; the net result is what the meter adds up to. */
-function GridBalance({ flow }: { flow: FlowValues | null }) {
+function GridBalance({ flow, importSplit }: { flow: FlowValues | null; importSplit?: string }) {
   const imp = flow?.imp ?? 0;
   const exp = flow?.exp ?? 0;
   const net = imp - exp;
@@ -92,6 +117,7 @@ function GridBalance({ flow }: { flow: FlowValues | null }) {
             <span className="size-2.5 rounded-sm bg-grid" />
           </div>
           <div className="mt-0.5 font-semibold">{flow ? formatFlow(imp, "kWh") : "—"}</div>
+          {importSplit && <div className="mt-0.5 text-xs text-subtle">{importSplit}</div>}
         </div>
       </div>
     </div>

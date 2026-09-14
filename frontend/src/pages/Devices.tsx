@@ -217,7 +217,12 @@ function InverterCard({ inverter }: { inverter: Inverter }) {
         <Stat label={t("live.power")} value={powerText(inverter.fresh ? inverter.power : 0)} />
         <Stat
           label={t("solar.today")}
-          value={`${energy(Math.max(inverter.today_kwh ?? 0, inverter.energy_today_kwh))} kWh`}
+          value={`${energy(
+            // The inverter's own counter is only current while it answers.
+            inverter.fresh && inverter.today_kwh != null
+              ? Math.max(inverter.today_kwh, inverter.energy_today_kwh)
+              : inverter.energy_today_kwh,
+          )} kWh`}
         />
         <Stat label={t("solar.total")} value={inverter.total_kwh != null ? `${energy(inverter.total_kwh, 1)} kWh` : "—"} />
         <Stat

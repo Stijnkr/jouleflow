@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import bisect
-import contextlib
 import logging
+import math
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -24,6 +24,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 from pymodbus.client import AsyncModbusTcpClient
+from pymodbus.exceptions import ConnectionException
 
 from .queries import _change
 from .storage import Storage
@@ -133,6 +134,8 @@ async def read_growatt(client: AsyncModbusTcpClient, unit_id: int) -> InverterRe
     start, count = GROWATT_BLOCK
     try:
         result = await client.read_input_registers(start, count=count, device_id=unit_id)
+    except ConnectionException as exc:
+        raise ConnectionError(str(exc) or "Connection lost") from exc
     except Exception as exc:  # pymodbus raises ModbusIOException on timeouts
         raise NoResponse(str(exc) or "No response") from exc
     if result.isError() or len(result.registers) < count:
@@ -220,6 +223,7 @@ def average_into_buckets(
     starts: list[int],
     bucket: int,
     since: int | None,
+    now: int | None = None,
 ) -> list[float | None]:
     """Average solar power (W) for each bucket starting at `starts`.
 
@@ -227,6 +231,8 @@ def average_into_buckets(
     sleeps. Missing slots count as zero once solar data exists (`since`); before that the
     result is None, so charts don't pretend there was no sun before the panels were
     connected. Buckets finer than the resolution take the value of the slot they fall in.
+    The bucket that contains `now` is averaged over the part that has elapsed, like the
+    meter series.
     """
     points = bridge_gaps(points, resolution)
     times = [p[0] for p in points]
@@ -239,7 +245,9 @@ def average_into_buckets(
             out.append(points[i][1] if i >= 0 and t - times[i] < resolution else 0.0)
         else:
             lo, hi = bisect.bisect_left(times, t), bisect.bisect_left(times, t + bucket)
-            out.append(sum(p[1] for p in points[lo:hi]) / (bucket / resolution))
+            covered = bucket if now is None else min(bucket, max(now - t, resolution))
+            slots = max(1, math.ceil(covered / resolution))
+            out.append(sum(p[1] for p in points[lo:hi]) / slots)
     return out
 
 
@@ -293,11 +301,16 @@ class SolarManager:
                 # One at a time: inverters often share a single RS485 gateway.
                 for state in list(self.states.values()):
                     await self._poll(state)
-            await self._store()
+            try:
+                await self._store()
+            except Exception:
+                log.exception("Failed to store solar readings")
             if time.time() - last_rollup > 60:
                 last_rollup = time.time()
-                with contextlib.suppress(Exception):
+                try:
                     await asyncio.to_thread(self.rollup, time.time())
+                except Exception:
+                    log.exception("Solar rollup failed")
             await asyncio.sleep(max(POLL_INTERVAL - (time.monotonic() - started), 1.0))
 
     async def _poll(self, state: InverterState) -> None:
@@ -305,7 +318,10 @@ class SolarManager:
             return
         try:
             client = self._clients.get(state.id)
-            if client is None or not client.connected:
+            if client is not None and not client.connected:
+                client.close()
+                client = None
+            if client is None:
                 client = _client(state.host, state.port)
                 self._clients[state.id] = client
                 if not await client.connect():
@@ -397,6 +413,21 @@ class SolarManager:
         )
         return wh / 1000
 
+    def _counter_span(
+        self, inverter_id: str, start: int, end: int
+    ) -> tuple[float, float] | tuple[None, None]:
+        """The lifetime counter at the first and last sample in [start, end)."""
+        db = self.storage._db  # noqa: SLF001
+        q = (
+            "SELECT total_kwh FROM solar_samples WHERE inverter_id = ? AND ts >= ? AND ts < ? "
+            "AND total_kwh IS NOT NULL ORDER BY ts {} LIMIT 1"
+        )
+        first = db.execute(q.format("ASC"), (inverter_id, start, end)).fetchone()
+        last = db.execute(q.format("DESC"), (inverter_id, start, end)).fetchone()
+        if first is None or last is None:
+            return None, None
+        return first["total_kwh"], last["total_kwh"]
+
     @staticmethod
     def _smooth(counter: float, integrated: float) -> float:
         return integrated if abs(integrated - counter) <= COUNTER_STEP_KWH else counter
@@ -428,22 +459,22 @@ class SolarManager:
         db = self.storage._db  # noqa: SLF001
         row = db.execute(
             "SELECT count(*) AS n, avg(power) AS power_avg, max(power) AS power_max, "
-            "max(temperature) AS temperature_max, min(total_kwh) AS first_kwh, "
-            "max(total_kwh) AS last_kwh FROM solar_samples "
+            "max(temperature) AS temperature_max FROM solar_samples "
             "WHERE inverter_id = ? AND ts >= ? AND ts < ?",
             (inverter_id, hour, hour + 3600),
         ).fetchone()
         if not row["n"]:
             return
+        first_kwh, last_kwh = self._counter_span(inverter_id, hour, hour + 3600)
         energy = None
-        if row["last_kwh"] is not None:
+        if last_kwh is not None:
             baseline = self._baseline(inverter_id, hour)
             prev_ts = db.execute(
                 "SELECT max(ts) FROM solar_agg_1h WHERE inverter_id = ? AND ts < ?",
                 (inverter_id, hour),
             ).fetchone()[0]
             hours = 1 if prev_ts is None else (hour - prev_ts) / 3600
-            energy = self._delta(baseline, row["first_kwh"], row["last_kwh"], hours)
+            energy = self._delta(baseline, first_kwh, last_kwh, hours)
             energy = self._smooth(energy, self._integrated(inverter_id, hour, hour + 3600))
         db.execute(
             "INSERT OR REPLACE INTO solar_agg_1h VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -454,7 +485,7 @@ class SolarManager:
                 row["power_avg"],
                 row["power_max"],
                 row["temperature_max"],
-                row["last_kwh"],
+                last_kwh,
                 energy,
             ),
         )
@@ -464,12 +495,16 @@ class SolarManager:
         db = self.storage._db  # noqa: SLF001
         with self.storage._lock:  # noqa: SLF001
             result: dict[str, float] = {}
+            # Rolled hours that only partly fall in the window count for that part.
             for row in db.execute(
-                "SELECT inverter_id, sum(energy) AS e FROM solar_agg_1h "
-                "WHERE ts >= ? AND ts < ? GROUP BY inverter_id",
+                "SELECT inverter_id, ts, energy FROM solar_agg_1h "
+                "WHERE ts + 3600 > ? AND ts < ? AND energy IS NOT NULL",
                 (start, end),
             ):
-                result[row["inverter_id"]] = row["e"] or 0.0
+                overlap = min(row["ts"] + 3600, end) - max(row["ts"], start)
+                result[row["inverter_id"]] = (
+                    result.get(row["inverter_id"], 0.0) + row["energy"] * overlap / 3600
+                )
             for inverter_id in self.states:
                 rolled = db.execute(
                     "SELECT max(ts) + 3600 FROM solar_agg_1h WHERE inverter_id = ?",
@@ -478,17 +513,11 @@ class SolarManager:
                 since = max(start, rolled or start)
                 if since >= end:
                     continue
-                row = db.execute(
-                    "SELECT min(total_kwh) AS first_kwh, max(total_kwh) AS last_kwh "
-                    "FROM solar_samples WHERE inverter_id = ? AND ts >= ? AND ts < ?",
-                    (inverter_id, since, end),
-                ).fetchone()
-                if row["last_kwh"] is None:
+                first_kwh, last_kwh = self._counter_span(inverter_id, since, end)
+                if last_kwh is None:
                     continue
                 baseline = self._baseline(inverter_id, since)
-                delta = self._delta(
-                    baseline, row["first_kwh"], row["last_kwh"], (end - since) / 3600
-                )
+                delta = self._delta(baseline, first_kwh, last_kwh, (end - since) / 3600)
                 delta = self._smooth(delta, self._integrated(inverter_id, since, end))
                 result[inverter_id] = result.get(inverter_id, 0.0) + delta
         return result
@@ -521,6 +550,17 @@ class SolarManager:
                 "WHERE ts >= ? AND ts < ? GROUP BY ts ORDER BY ts",
                 (start - res, end),
             )
+            # Hours not rolled up yet (the current one, or since the last rollup) come
+            # from raw samples, so the chart doesn't end an hour early.
+            rolled = self.storage.query_one("SELECT max(ts) + 3600 AS t FROM solar_agg_1h")["t"]
+            rows = list(rows) + list(
+                self.storage.query(
+                    "SELECT t, sum(p) AS w FROM (SELECT ts / 3600 * 3600 AS t, avg(power) AS p "
+                    "FROM solar_samples WHERE ts >= ? AND ts < ? GROUP BY t, inverter_id) "
+                    "GROUP BY t ORDER BY t",
+                    (max(rolled or 0, start - res), end),
+                )
+            )
         return [(r["t"], r["w"] or 0.0) for r in rows], res
 
     def add_to_series(self, payload: dict) -> dict:
@@ -534,7 +574,9 @@ class SolarManager:
         solar: list[float | None] = []
         if starts:
             points, res = self.power_points(starts[0], starts[-1] + bucket, bucket)
-            solar = average_into_buckets(points, res, starts, bucket, self.first_data())
+            solar = average_into_buckets(
+                points, res, starts, bucket, self.first_data(), int(time.time())
+            )
         rows = []
         for point, w in zip(payload["points"], solar, strict=True):
             home = None
@@ -550,7 +592,9 @@ class SolarManager:
         return {**payload, "fields": [*fields, "solar_avg", "home_avg"], "points": rows}
 
     def energy_total(self, start: int, end: int) -> float | None:
-        if end <= start or (not self.states and self.first_data() is None):
+        """kWh from all inverters, or None when there is no solar data for the window."""
+        first = self.first_data()
+        if end <= start or first is None or end <= first:
             return None
         return round(sum(self.energy_between(start, end).values()), 3)
 
@@ -593,8 +637,6 @@ class SolarManager:
         for i, bar in enumerate(bars):
             end = min(bounds[i + 1], now)
             solar = self.energy_total(bar[0], end) if bar[0] < now else None
-            if solar is not None and solar == 0 and bar[1] is None:
-                solar = None
             use = None
             if solar is not None and bar[1] is not None:
                 use = round(max(bar[1] - (bar[2] or 0.0) + solar, 0.0), 3)
@@ -638,8 +680,11 @@ class SolarManager:
                     "error": state.error,
                     "error_code": state.error_code,
                     **reading,
-                    # A sleeping or unreachable inverter produces nothing right now.
-                    "power": reading.get("power") if fresh else 0.0,
+                    # Asleep (no answer, as Growatt does at night) means 0 W; unreachable
+                    # for another reason means we simply don't know.
+                    "power": reading.get("power")
+                    if fresh
+                    else (0.0 if state.error_code == "no_response" else None),
                 }
             )
         return out
